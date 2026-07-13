@@ -690,11 +690,15 @@ export default function Admin() {
   };
 
   const startEditEmployee = (emp: any) => {
+    const empBidang = emp.bidang || '';
+    // Normalisasi: pastikan bidang yang ada di state cocok dengan salah satu entry di departments
+    // Jika bidang kosong atau tidak ditemukan, gunakan departments[0] agar tampilan select selalu sinkron
+    const normalizedBidang = departments.find(d => d === empBidang) || empBidang || departments[0] || '';
     setEditingEmployee({
       id: emp.id || emp.uid,
       displayName: emp.displayName || emp.name || '',
       nip: emp.nip || '',
-      bidang: emp.bidang || '',
+      bidang: normalizedBidang,
       role: emp.role || 'staff'
     });
     setIsEditDialogOpen(true);
@@ -3274,6 +3278,10 @@ export default function Admin() {
                   onChange={e => setEditingEmployee({...editingEmployee, bidang: e.target.value})}
                   className="flex h-10 w-full rounded-md border border-slate-200 bg-slate-50 px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-red-500 font-medium"
                 >
+                  {/* Jika bidang pegawai tidak ada di daftar departments, tambahkan sebagai opsi agar state tetap akurat */}
+                  {editingEmployee?.bidang && !departments.includes(editingEmployee.bidang) && (
+                    <option key={editingEmployee.bidang} value={editingEmployee.bidang}>{editingEmployee.bidang}</option>
+                  )}
                   {departments.map(dept => (
                     <option key={dept} value={dept}>{dept}</option>
                   ))}
