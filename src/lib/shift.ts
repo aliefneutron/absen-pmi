@@ -100,6 +100,7 @@ export function getCheckOutStatus(now: Date, shift: Shift) {
   }
 
   const checkOutWindowStart = shiftEndDate;
+  // Window absen pulang: 30 menit setelah shift berakhir
   const checkOutWindowEnd = addMinutes(shiftEndDate, 30);
   
   const isCheckOutWindow = now >= checkOutWindowStart && now <= checkOutWindowEnd;

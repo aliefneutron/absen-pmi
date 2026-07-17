@@ -366,15 +366,27 @@ export default function Dashboard() {
       return;
     }
 
-    // Check regular shift attendance
+    // Check regular shift attendance:
+    // 1. First try exact match with current detected shift
+    // 2. If not found, fallback to ANY shift record for today
+    //    (prevents state reset when shift boundary is crossed, e.g. 14:00 Pagi→Sore transition)
     if (!targetShift) {
       setHasAttendedToday(false);
       return;
     }
-    const shiftLog = snap.docs.find(d => {
+
+    let shiftLog = snap.docs.find(d => {
       const data = d.data();
       return data.date === targetDate && data.shiftName === targetShift && !data.isEvent;
     });
+
+    // Fallback: if no exact match, look for any non-checkout shift record for today
+    if (!shiftLog) {
+      shiftLog = snap.docs.find(d => {
+        const data = d.data();
+        return data.date === targetDate && !data.isLeave && !data.isEvent && data.shiftName;
+      });
+    }
     
     if (shiftLog) {
       const data = shiftLog.data();
@@ -544,7 +556,10 @@ export default function Dashboard() {
         }
 
         const isCheckOut = hasAttendedToday && !hasCheckedOutToday && isEffectiveCheckOutWindow;
-        const recordId = `${user.uid}_${logicalDate}_${currentShift.name}`;
+        // Untuk checkout: gunakan shiftName dari record absen datang (bukan currentShift yang mungkin sudah berubah)
+        const effectiveShiftName = (isCheckOut && attendanceData?.shiftName) ? attendanceData.shiftName : currentShift.name;
+        const effectiveLogicalDate = (isCheckOut && attendanceData?.date) ? attendanceData.date : logicalDate;
+        const recordId = `${user.uid}_${effectiveLogicalDate}_${effectiveShiftName}`;
 
         if (isCheckOut) {
           const updateData = {
