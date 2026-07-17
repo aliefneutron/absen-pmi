@@ -58,26 +58,30 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         await withTimeout(setDoc(userDocRef, { role: 'admin' }, { merge: true }));
       }
     } else {
-      // Check if a profile with this email was pre-registered
-      const q = query(collection(db, 'users'), where('email', '==', currentUser.email), limit(1));
+      // Check if a profile with this email was pre-registered (case-insensitive)
+      const emailLower = (currentUser.email || '').toLowerCase().trim();
+      const q = query(collection(db, 'users'), where('email', '==', emailLower));
       const emailSnap = await withTimeout(getDocs(q));
       
       if (!emailSnap.empty) {
+        // Use the first found doc's data as the source of truth
         const existingDoc = emailSnap.docs[0];
         const existingData = existingDoc.data();
         userProfile = {
           status: 'approved', // Default to approved for pre-registered users
           ...existingData,
           uid: currentUser.uid,
+          email: emailLower,
           displayName: currentUser.displayName || existingData.displayName || existingData.name,
           updatedAt: serverTimestamp(),
         };
         await withTimeout(setDoc(userDocRef, userProfile));
         
-        // Delete the pre-registered document to prevent duplicates
-        if (existingDoc.id !== currentUser.uid) {
-          await withTimeout(deleteDoc(doc(db, 'users', existingDoc.id)));
-        }
+        // Delete ALL pre-registered/duplicate documents to prevent duplicates
+        const deletePromises = emailSnap.docs
+          .filter(d => d.id !== currentUser.uid)
+          .map(d => withTimeout(deleteDoc(doc(db, 'users', d.id))).catch(e => console.warn('Could not delete duplicate doc:', d.id, e)));
+        await Promise.all(deletePromises);
       } else {
         const usersSnap = await withTimeout(getDocs(query(collection(db, 'users'), limit(1))));
         const isFirstUser = usersSnap.empty;

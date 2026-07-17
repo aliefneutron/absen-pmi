@@ -232,9 +232,13 @@ export default function Admin() {
 
         let count = 0;
         
-        // Detect Grid Format (Row 2 has 'email' and '1')
+        // Detect Grid Format:
+        // - Row 2 has 'email'/'nama' in col 0, and '1' in col 1 or 2
         const row2 = rows[1] || [];
-        const isGridFormat = row2[0]?.toString().toLowerCase() === 'email' && row2[1]?.toString() === '1';
+        const col0 = row2[0]?.toString().toLowerCase().trim();
+        const isNameFormat = col0 === 'nama'; // new format with nama+bidang
+        const isEmailFormat = col0 === 'email'; // old format with email
+        const isGridFormat = (isNameFormat || isEmailFormat) && (row2[1]?.toString() === '1' || row2[2]?.toString() === '1');
 
         if (isGridFormat) {
           const monthStr = rosterMonth; // e.g., "2026-05"
@@ -243,17 +247,33 @@ export default function Admin() {
              return;
           }
 
+          // Determine data column offset: nama format has bidang in col1, data starts col2
+          const dataOffset = isNameFormat ? 2 : 1;
+
           for (let i = 2; i < rows.length; i++) {
             const row = rows[i];
-            const email = row[0]?.toString().trim().toLowerCase();
-            if (!email) continue;
+            const identifier = row[0]?.toString().trim();
+            if (!identifier) continue;
 
-            const emp = employees.find(e => e.email?.toLowerCase() === email);
+            // Skip bidang header rows (rows starting with '---')
+            if (identifier.startsWith('---')) continue;
+
+            // Find employee by name (case-insensitive) or email
+            const identifierLower = identifier.toLowerCase();
+            const emp = employees.find(e => {
+              if (isEmailFormat) {
+                return e.email?.toLowerCase() === identifierLower;
+              } else {
+                // Match by name (displayName or name), trim and case-insensitive
+                const empName = (e.displayName || e.name || '').toLowerCase().trim();
+                return empName === identifierLower;
+              }
+            });
             if (!emp) continue;
 
             // Iterate days 1-31
             for (let day = 1; day <= 31; day++) {
-              const code = row[day]?.toString().toUpperCase();
+              const code = row[dataOffset - 1 + day]?.toString().toUpperCase();
               if (!code) continue;
 
               let shiftName = '';
@@ -346,33 +366,56 @@ export default function Admin() {
       const baseDate = parse(rosterMonth || format(new Date(), 'yyyy-MM'), 'yyyy-MM', new Date());
       const monthName = format(baseDate, 'MMMM yyyy', { locale: id }).toUpperCase();
       
-      // Header Row 2: email, 1, 2, 3...
-      const headers = ['email'];
+      // Header Row 2: nama, bidang, 1, 2, 3...
+      const headers = ['nama', 'bidang'];
       for (let i = 1; i <= 31; i++) headers.push(i.toString());
-      
-      // Auto-fill with current employee emails
-      let rows = approvedEmployees.map(emp => [emp.email || '']);
-      
-      // Add empty columns for each day
-      rows = rows.map(row => {
-        const fullRow = [...row];
-        for (let i = 1; i <= 31; i++) fullRow.push('');
-        return fullRow;
+
+      // Group employees by bidang
+      const bidangMap = new Map<string, any[]>();
+      approvedEmployees.forEach(emp => {
+        const bidang = (emp.bidang || 'LAINNYA').toUpperCase();
+        if (!bidangMap.has(bidang)) bidangMap.set(bidang, []);
+        bidangMap.get(bidang)!.push(emp);
       });
 
-      if (rows.length === 0) {
-        const placeholder = ['contoh@email.com'];
+      const rows: any[][] = [];
+
+      if (bidangMap.size === 0) {
+        // Placeholder row jika tidak ada pegawai
+        const placeholder = ['Contoh Nama', 'BIDANG'];
         for (let i = 1; i <= 31; i++) placeholder.push('');
         rows.push(placeholder);
+      } else {
+        for (const [bidang, emps] of bidangMap.entries()) {
+          // Baris header bidang sebagai separator
+          const bidangHeader = [`--- ${bidang} ---`, ''];
+          for (let i = 1; i <= 31; i++) bidangHeader.push('');
+          rows.push(bidangHeader);
+
+          // Baris setiap pegawai dalam bidang ini
+          emps.forEach(emp => {
+            const row = [emp.displayName || emp.name || '', bidang];
+            for (let i = 1; i <= 31; i++) row.push('');
+            rows.push(row);
+          });
+        }
       }
 
       const data = [
-        [monthName], // Row 1
-        headers,      // Row 2
+        [monthName], // Row 1: nama bulan
+        headers,      // Row 2: header kolom
         ...rows
       ];
       
       const ws = XLSX.utils.aoa_to_sheet(data);
+
+      // Styling: lebarkan kolom nama dan bidang
+      ws['!cols'] = [
+        { wch: 28 }, // nama
+        { wch: 16 }, // bidang
+        ...Array(31).fill({ wch: 5 }), // hari 1-31
+      ];
+
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Jadwal');
       XLSX.writeFile(wb, `Template_Jadwal_${rosterMonth || format(new Date(), 'yyyy-MM')}.xlsx`);
@@ -476,22 +519,46 @@ export default function Admin() {
       const snap = await getDocs(q);
       
       if (!snap.empty) {
-        // Update all existing matching documents (both pre-registered and active ones)
-        const updatePromises = snap.docs.map(existingDoc => 
-          updateDoc(doc(db, 'users', existingDoc.id), {
-            displayName: newEmployee.name,
-            name: newEmployee.name,
-            nip: newEmployee.nip,
-            bidang: newEmployee.bidang,
-            role: newEmployee.role,
-            status: 'approved',
-            updatedAt: serverTimestamp()
-          })
-        );
-        await Promise.all(updatePromises);
-        toast.success('Data pegawai diperbarui', { id: toastId });
+        // Sort docs: prioritize real UID docs (not pre_/import_ prefixed) and ones with deviceId
+        const sortedDocs = [...snap.docs].sort((a, b) => {
+          const score = (d: any) => {
+            const data = d.data();
+            let s = 0;
+            if (!d.id.startsWith('pre_') && !d.id.startsWith('import_')) s += 10; // real UID
+            if (data.deviceId) s += 5;
+            if (data.uid) s += 3;
+            if (data.nip) s += 2;
+            return s;
+          };
+          return score(b) - score(a);
+        });
+
+        // Update only the best (primary) document
+        const primaryDoc = sortedDocs[0];
+        await updateDoc(doc(db, 'users', primaryDoc.id), {
+          displayName: newEmployee.name,
+          name: newEmployee.name,
+          nip: newEmployee.nip,
+          bidang: newEmployee.bidang,
+          role: newEmployee.role,
+          status: 'approved',
+          email: emailLower,
+          updatedAt: serverTimestamp()
+        });
+
+        // Delete all duplicate (non-primary) documents
+        const duplicates = sortedDocs.slice(1);
+        if (duplicates.length > 0) {
+          const deletePromises = duplicates.map(d => 
+            deleteDoc(doc(db, 'users', d.id)).catch(err => console.warn('Could not delete duplicate:', d.id, err))
+          );
+          await Promise.all(deletePromises);
+          toast.success(`Data pegawai diperbarui & ${duplicates.length} duplikat dihapus`, { id: toastId });
+        } else {
+          toast.success('Data pegawai diperbarui', { id: toastId });
+        }
       } else {
-        // Create new
+        // Create new pre-registered entry
         const id = `pre_${Date.now()}`;
         await setDoc(doc(db, 'users', id), {
           ...newEmployee,
@@ -535,14 +602,13 @@ export default function Admin() {
       for (const [email, users] of emailMap.entries()) {
         if (users.length > 1) {
           // Identify the "best" record to keep:
-          // 1. One with a 'uid' (meaning they've logged in)
-          // 2. One with the longest ID (usually 'pre_...' is longer than raw uid) - actually raw UID is usually better as it holds auth connection
-          // Let's prioritize ones that have a deviceId or whose ID is NOT pre_ or import_
+          // Prioritize: real Firebase UID (not pre_/import_ prefix) > has deviceId > has uid field > has nip
           users.sort((a, b) => {
             const score = (u: any) => {
               let s = 0;
-              if (u.id.length < 25) s += 10; // Simple heuristic: real UIDs are usually shorter than our 'pre_timestamp'
+              if (!u.id.startsWith('pre_') && !u.id.startsWith('import_')) s += 10; // real Firebase UID
               if (u.deviceId) s += 5;
+              if (u.uid) s += 3;
               if (u.nip) s += 2;
               if (u.createdAt?.toDate) s += 1;
               return s;
@@ -553,7 +619,7 @@ export default function Admin() {
           // Keep the first one, delete the rest
           const toDelete = users.slice(1);
           for (const u of toDelete) {
-            await deleteDoc(doc(db, 'users', u.id));
+            await deleteDoc(doc(db, 'users', u.id)).catch(err => console.warn('Could not delete:', u.id, err));
             deleteCount++;
           }
         }
@@ -2047,42 +2113,83 @@ export default function Admin() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {approvedEmployees.map(emp => (
-                    <TableRow key={emp.id} className="hover:bg-slate-50 italic">
-                      <TableCell className="sticky left-0 bg-white z-10 py-3 border-r min-w-[150px] shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
-                        <p className="font-black text-slate-800 text-[10px] uppercase leading-tight">{emp.displayName || emp.name}</p>
-                        <p className="text-[8px] text-slate-400 font-mono">{emp.bidang || '-'}</p>
-                      </TableCell>
-                      {rosterMonth && eachDayOfInterval({ 
-                        start: startOfMonth(parse(rosterMonth, 'yyyy-MM', new Date())), 
-                        end: endOfMonth(parse(rosterMonth, 'yyyy-MM', new Date())) 
-                      }).map(date => {
-                        const dateStr = format(date, 'yyyy-MM-dd');
-                        const roster = rosters.find(r => r.userId === (emp.id || emp.uid) && r.date === dateStr);
-                        return (
-                          <TableCell key={dateStr} className="p-0 text-center border-r last:border-0 h-12">
-                            <select
-                              value={roster?.shiftName || ''}
-                              onChange={(e) => updateRoster(emp.id || emp.uid, dateStr, e.target.value)}
-                              className={cn(
-                                "w-full h-full text-[9px] font-black p-0 text-center border-none appearance-none cursor-pointer focus:ring-1 focus:ring-inset focus:ring-red-500 bg-transparent transition-colors",
-                                roster?.shiftName === 'Pagi' ? "bg-emerald-50 text-emerald-700" :
-                                roster?.shiftName === 'Sore' ? "bg-amber-50 text-amber-700" :
-                                roster?.shiftName === 'Malam' ? "bg-red-50 text-red-700" :
-                                roster?.shiftName === 'OFF' ? "bg-rose-50 text-rose-500" : "text-slate-200"
-                              )}
-                            >
-                              <option value="" className="text-slate-300">-</option>
-                              <option value="Pagi" className="bg-white text-emerald-600 font-bold">P</option>
-                              <option value="Sore" className="bg-white text-amber-600 font-bold">S</option>
-                              <option value="Malam" className="bg-white text-red-600 font-bold">M</option>
-                              <option value="OFF" className="bg-white text-rose-600 font-bold text-[8px]">OFF</option>
-                            </select>
+                  {(() => {
+                    // Group approved employees by bidang
+                    const bidangOrder: string[] = [];
+                    const bidangGroups: Record<string, any[]> = {};
+                    approvedEmployees.forEach(emp => {
+                      const bidang = (emp.bidang || 'LAINNYA').toUpperCase();
+                      if (!bidangGroups[bidang]) {
+                        bidangGroups[bidang] = [];
+                        bidangOrder.push(bidang);
+                      }
+                      bidangGroups[bidang].push(emp);
+                    });
+
+                    const rows: React.ReactNode[] = [];
+                    const dayIntervals = rosterMonth ? eachDayOfInterval({
+                      start: startOfMonth(parse(rosterMonth, 'yyyy-MM', new Date())),
+                      end: endOfMonth(parse(rosterMonth, 'yyyy-MM', new Date()))
+                    }) : [];
+                    const totalCols = dayIntervals.length;
+
+                    bidangOrder.forEach(bidang => {
+                      // Bidang header row
+                      rows.push(
+                        <TableRow key={`header-${bidang}`} className="bg-slate-100 hover:bg-slate-100">
+                          <TableCell
+                            colSpan={totalCols + 1}
+                            className="sticky left-0 py-2 px-3 border-r bg-slate-100 z-10"
+                          >
+                            <span className="text-[9px] font-black uppercase tracking-widest text-red-700 flex items-center gap-2">
+                              <span className="inline-block w-2 h-2 rounded-full bg-red-500"></span>
+                              {bidang}
+                              <span className="font-normal text-slate-400 ml-1">{bidangGroups[bidang].length} pegawai</span>
+                            </span>
                           </TableCell>
+                        </TableRow>
+                      );
+
+                      // Employee rows in this bidang
+                      bidangGroups[bidang].forEach(emp => {
+                        rows.push(
+                          <TableRow key={emp.id} className="hover:bg-slate-50 italic">
+                            <TableCell className="sticky left-0 bg-white z-10 py-3 border-r min-w-[150px] shadow-[2px_0_5px_rgba(0,0,0,0.02)]">
+                              <p className="font-black text-slate-800 text-[10px] uppercase leading-tight">{emp.displayName || emp.name}</p>
+                              <p className="text-[8px] text-slate-400 font-mono">{emp.bidang || '-'}</p>
+                            </TableCell>
+                            {dayIntervals.map(date => {
+                              const dateStr = format(date, 'yyyy-MM-dd');
+                              const roster = rosters.find(r => r.userId === (emp.id || emp.uid) && r.date === dateStr);
+                              return (
+                                <TableCell key={dateStr} className="p-0 text-center border-r last:border-0 h-12">
+                                  <select
+                                    value={roster?.shiftName || ''}
+                                    onChange={(e) => updateRoster(emp.id || emp.uid, dateStr, e.target.value)}
+                                    className={cn(
+                                      "w-full h-full text-[9px] font-black p-0 text-center border-none appearance-none cursor-pointer focus:ring-1 focus:ring-inset focus:ring-red-500 bg-transparent transition-colors",
+                                      roster?.shiftName === 'Pagi' ? "bg-emerald-50 text-emerald-700" :
+                                      roster?.shiftName === 'Sore' ? "bg-amber-50 text-amber-700" :
+                                      roster?.shiftName === 'Malam' ? "bg-red-50 text-red-700" :
+                                      roster?.shiftName === 'OFF' ? "bg-rose-50 text-rose-500" : "text-slate-200"
+                                    )}
+                                  >
+                                    <option value="" className="text-slate-300">-</option>
+                                    <option value="Pagi" className="bg-white text-emerald-600 font-bold">P</option>
+                                    <option value="Sore" className="bg-white text-amber-600 font-bold">S</option>
+                                    <option value="Malam" className="bg-white text-red-600 font-bold">M</option>
+                                    <option value="OFF" className="bg-white text-rose-600 font-bold text-[8px]">OFF</option>
+                                  </select>
+                                </TableCell>
+                              );
+                            })}
+                          </TableRow>
                         );
-                      })}
-                    </TableRow>
-                  ))}
+                      });
+                    });
+
+                    return rows;
+                  })()}
                 </TableBody>
               </Table>
             </div>
