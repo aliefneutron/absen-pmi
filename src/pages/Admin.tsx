@@ -157,8 +157,11 @@ export default function Admin() {
         where('month', '==', monthStr)
       );
       const snap = await getDocs(q);
-      const fetched = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      let fetched = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       
+      // Filter out super admins
+      fetched = fetched.filter((log: any) => log.userEmail !== 'aliefneutron@gmail.com' && log.userEmail !== 'aliefcorp.app@gmail.com');
+
       // Sort manually to avoid index requirement
       fetched.sort((a: any, b: any) => {
         const timeA = a.timestamp?.toDate ? a.timestamp.toDate().getTime() : new Date(a.timestamp || 0).getTime();
@@ -430,14 +433,18 @@ export default function Admin() {
       // First try with ordering (requires index)
       const q = query(collection(db, 'users'), orderBy('createdAt', 'desc'));
       const snap = await getDocs(q);
-      setEmployees(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      let data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      data = data.filter((emp: any) => emp.email !== 'aliefneutron@gmail.com' && emp.email !== 'aliefcorp.app@gmail.com');
+      setEmployees(data);
     } catch (err: any) {
       console.error("Fetch Employees (ordered) failed:", err);
       // Fallback: try without ordering if index is missing
       try {
         const qSimple = query(collection(db, 'users'));
         const snapSimple = await getDocs(qSimple);
-        setEmployees(snapSimple.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        let data = snapSimple.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        data = data.filter((emp: any) => emp.email !== 'aliefneutron@gmail.com' && emp.email !== 'aliefcorp.app@gmail.com');
+        setEmployees(data);
       } catch (err2: any) {
         console.error("Fetch Employees (simple) failed:", err2);
         toast.error('Gagal mengambil data pegawai. Cek koneksi atau izin database.');
