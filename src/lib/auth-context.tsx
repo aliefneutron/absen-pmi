@@ -122,7 +122,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     // Profile Completion Logic
     if (userProfile && userProfile.role !== 'admin') {
-      const isComplete = !!(userProfile.nip && userProfile.bidang);
+      // Jika sudah di-approve oleh admin, anggap profil komplit (skip isi profil)
+      // Jika masih pending, wajib isi nip & bidang
+      const isComplete = userProfile.status !== 'pending' || !!(userProfile.nip && userProfile.bidang);
       setIsProfileComplete(isComplete);
     } else {
       setIsProfileComplete(true);

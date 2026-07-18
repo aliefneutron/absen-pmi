@@ -594,32 +594,56 @@ export default function Admin() {
       allUsers.forEach(u => {
         const email = u.email?.toLowerCase().trim();
         if (!email) return;
-        if (!emailMap.has(email)) emailMap.set(email, []);
-        emailMap.get(email)?.push(u);
-      });
-
       let deleteCount = 0;
-      for (const [email, users] of emailMap.entries()) {
+      let mergeCount = 0;
+      for (const [, users] of emailMap.entries()) {
         if (users.length > 1) {
-          // Identify the "best" record to keep:
-          // Prioritize: real Firebase UID (not pre_/import_ prefix) > has deviceId > has uid field > has nip
+          // Prioritas: real UID > punya deviceId (tersinkron perangkat) > punya nip > punya bidang
           users.sort((a, b) => {
             const score = (u: any) => {
               let s = 0;
-              if (!u.id.startsWith('pre_') && !u.id.startsWith('import_')) s += 10; // real Firebase UID
-              if (u.deviceId) s += 5;
-              if (u.uid) s += 3;
-              if (u.nip) s += 2;
+              if (!u.id.startsWith('pre_') && !u.id.startsWith('import_')) s += 20; // real UID
+              if (u.deviceId) s += 10; // sudah tersinkron perangkat - PRIORITAS TINGGI
+              if (u.nip) s += 5;
+              if (u.bidang) s += 3;
+              if (u.uid) s += 2;
               if (u.createdAt?.toDate) s += 1;
               return s;
             };
             return score(b) - score(a);
           });
 
-          // Keep the first one, delete the rest
-          const toDelete = users.slice(1);
-          for (const u of toDelete) {
-            await deleteDoc(doc(db, 'users', u.id)).catch(err => console.warn('Could not delete:', u.id, err));
+          // Pemenang = doc teratas (real UID + punya deviceId = score tertinggi)
+          const winner = users[0];
+          const losers = users.slice(1);
+
+          // MERGE dulu: salin field yang kosong di winner dari loser sebelum hapus
+          // Ini memastikan data nip/bidang/status dari pre-registrasi tidak hilang
+          const mergedFields: any = {};
+          for (const loser of losers) {
+            if (!winner.nip && loser.nip) mergedFields.nip = loser.nip;
+            if (!winner.bidang && loser.bidang) mergedFields.bidang = loser.bidang;
+            if (!winner.displayName && loser.displayName) mergedFields.displayName = loser.displayName;
+            if (!winner.name && loser.name) mergedFields.name = loser.name;
+            if (!winner.role && loser.role) mergedFields.role = loser.role;
+            // Jika winner masih pending tapi loser sudah approved → ambil approved
+            if (winner.status === 'pending' && loser.status === 'approved') {
+              mergedFields.status = 'approved';
+            }
+          }
+
+          if (Object.keys(mergedFields).length > 0) {
+            await updateDoc(doc(db, 'users', winner.id), mergedFields).catch(err =>
+              console.warn('Could not merge fields:', winner.id, err)
+            );
+            mergeCount++;
+          }
+
+          // Baru hapus loser setelah data sudah aman di-merge ke winner
+          for (const loser of losers) {
+            await deleteDoc(doc(db, 'users', loser.id)).catch(err =>
+              console.warn('Could not delete:', loser.id, err)
+            );
             deleteCount++;
           }
         }
