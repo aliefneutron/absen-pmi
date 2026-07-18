@@ -435,8 +435,14 @@ export default function Admin() {
       const snap = await getDocs(q);
       let data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
       
-      // Filter out admin / super admin
-      data = data.filter((emp: any) => emp.role !== 'admin' && emp.email !== 'aliefneutron@gmail.com' && emp.email !== 'aliefcorp.app@gmail.com');
+      // Filter out super admin only (by role 'superadmin', specific emails, or specific name)
+      // while keeping regular 'admin' role in the roster
+      data = data.filter((emp: any) => {
+        const isSuperAdminRole = emp.role === 'superadmin';
+        const isSuperAdminEmail = emp.email === 'aliefneutron@gmail.com' || emp.email === 'aliefcorp.app@gmail.com';
+        const isSuperAdminName = (emp.name || '').toUpperCase() === 'ALIEF NEUTRON' || (emp.displayName || '').toUpperCase() === 'ALIEF NEUTRON';
+        return !isSuperAdminRole && !isSuperAdminEmail && !isSuperAdminName;
+      });
       
       setEmployees(data);
     } catch (err: any) {
@@ -447,8 +453,12 @@ export default function Admin() {
         const snapSimple = await getDocs(qSimple);
         let data = snapSimple.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         
-        // Filter out admin / super admin
-        data = data.filter((emp: any) => emp.role !== 'admin' && emp.email !== 'aliefneutron@gmail.com' && emp.email !== 'aliefcorp.app@gmail.com');
+        data = data.filter((emp: any) => {
+          const isSuperAdminRole = emp.role === 'superadmin';
+          const isSuperAdminEmail = emp.email === 'aliefneutron@gmail.com' || emp.email === 'aliefcorp.app@gmail.com';
+          const isSuperAdminName = (emp.name || '').toUpperCase() === 'ALIEF NEUTRON' || (emp.displayName || '').toUpperCase() === 'ALIEF NEUTRON';
+          return !isSuperAdminRole && !isSuperAdminEmail && !isSuperAdminName;
+        });
         
         setEmployees(data);
       } catch (err2: any) {
