@@ -617,6 +617,10 @@ export default function Admin() {
       allUsers.forEach(u => {
         const email = u.email?.toLowerCase().trim();
         if (!email) return;
+        if (!emailMap.has(email)) emailMap.set(email, []);
+        emailMap.get(email)!.push(u);
+      });
+
       let deleteCount = 0;
       let mergeCount = 0;
       for (const [, users] of emailMap.entries()) {
