@@ -434,7 +434,10 @@ export default function Admin() {
       const q = query(collection(db, 'users'), orderBy('createdAt', 'desc'));
       const snap = await getDocs(q);
       let data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      data = data.filter((emp: any) => emp.email !== 'aliefneutron@gmail.com' && emp.email !== 'aliefcorp.app@gmail.com');
+      
+      // Filter out admin / super admin
+      data = data.filter((emp: any) => emp.role !== 'admin' && emp.email !== 'aliefneutron@gmail.com' && emp.email !== 'aliefcorp.app@gmail.com');
+      
       setEmployees(data);
     } catch (err: any) {
       console.error("Fetch Employees (ordered) failed:", err);
@@ -443,7 +446,10 @@ export default function Admin() {
         const qSimple = query(collection(db, 'users'));
         const snapSimple = await getDocs(qSimple);
         let data = snapSimple.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        data = data.filter((emp: any) => emp.email !== 'aliefneutron@gmail.com' && emp.email !== 'aliefcorp.app@gmail.com');
+        
+        // Filter out admin / super admin
+        data = data.filter((emp: any) => emp.role !== 'admin' && emp.email !== 'aliefneutron@gmail.com' && emp.email !== 'aliefcorp.app@gmail.com');
+        
         setEmployees(data);
       } catch (err2: any) {
         console.error("Fetch Employees (simple) failed:", err2);
