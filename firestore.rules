@@ -65,7 +65,13 @@ service cloud.firestore {
       allow list: if isSignedIn();
       allow read: if isSignedIn() && (isOwner(userId) || isAdmin());
       allow create: if (isSignedIn() && isOwner(userId)) || isAdmin();
-      allow update, delete: if isAdmin() || (isSignedIn() && isOwner(userId) && !incoming().diff(existing()).affectedKeys().hasAny(['role', 'isAdmin', 'status']));
+      allow update: if isAdmin() || (isSignedIn() && isOwner(userId) && !incoming().diff(existing()).affectedKeys().hasAny(['role', 'isAdmin', 'status']));
+      // Allow delete: admin OR owner OR signed-in user deleting a pre-registered doc with matching email
+      allow delete: if isAdmin() || (isSignedIn() && isOwner(userId)) || (
+        isSignedIn() &&
+        (userId.matches('^pre_.*') || userId.matches('^import_.*')) &&
+        resource.data.email == request.auth.token.email
+      );
     }
 
     // -------------------------------------------------------------------------

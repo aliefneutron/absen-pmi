@@ -35,7 +35,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isProfileComplete, setIsProfileComplete] = useState(true);
   const [isApproved, setIsApproved] = useState(true);
 
-  const withTimeout = <T,>(promise: Promise<T>, timeoutMs: number = 5000): Promise<T> => {
+  const withTimeout = <T,>(promise: Promise<T>, timeoutMs: number = 8000): Promise<T> => {
     const timeout = new Promise<never>((_, reject) => 
       setTimeout(() => reject(new Error('Firebase Request Timeout')), timeoutMs)
     );
@@ -60,10 +60,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } else {
       // Check if a profile with this email was pre-registered (case-insensitive)
       const emailLower = (currentUser.email || '').toLowerCase().trim();
+      console.log('[Auth] No doc found for UID, searching by email:', emailLower);
       const q = query(collection(db, 'users'), where('email', '==', emailLower));
       const emailSnap = await withTimeout(getDocs(q));
       
       if (!emailSnap.empty) {
+        console.log('[Auth] Found pre-registered doc(s):', emailSnap.docs.map(d => d.id));
         // Use the first found doc's data as the source of truth
         const existingDoc = emailSnap.docs[0];
         const existingData = existingDoc.data();
@@ -76,12 +78,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           updatedAt: serverTimestamp(),
         };
         await withTimeout(setDoc(userDocRef, userProfile));
+        console.log('[Auth] Merged pre-registered data into UID doc:', currentUser.uid);
         
         // Delete ALL pre-registered/duplicate documents to prevent duplicates
-        const deletePromises = emailSnap.docs
-          .filter(d => d.id !== currentUser.uid)
-          .map(d => withTimeout(deleteDoc(doc(db, 'users', d.id))).catch(e => console.warn('Could not delete duplicate doc:', d.id, e)));
-        await Promise.all(deletePromises);
+        const toDelete = emailSnap.docs.filter(d => d.id !== currentUser.uid);
+        if (toDelete.length > 0) {
+          console.log('[Auth] Deleting', toDelete.length, 'pre-registered/duplicate doc(s)...');
+          const deletePromises = toDelete.map(d =>
+            withTimeout(deleteDoc(doc(db, 'users', d.id))).then(() => {
+              console.log('[Auth] Deleted duplicate doc:', d.id);
+            }).catch(e => console.warn('[Auth] Could not delete duplicate doc:', d.id, '→', e?.message))
+          );
+          await Promise.all(deletePromises);
+        }
       } else {
         const usersSnap = await withTimeout(getDocs(query(collection(db, 'users'), limit(1))));
         const isFirstUser = usersSnap.empty;
