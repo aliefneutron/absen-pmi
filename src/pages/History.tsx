@@ -250,13 +250,13 @@ export default function History({ standalone = true }: { standalone?: boolean })
                           </div>
                         ) : item.log.isLate ? (
                           <div className="flex flex-col gap-1">
-                            <span className="w-fit px-3 py-1 bg-rose-100 text-rose-700 rounded-lg text-[9px] font-black uppercase tracking-widest border border-rose-200">TERLAMBAT</span>
-                            <span className="text-[8px] text-rose-400 font-bold uppercase ml-1">Melebihi Batas</span>
+                            <span className="w-fit px-3 py-1 bg-amber-500 text-white rounded-lg text-[9px] font-black uppercase tracking-widest shadow-xs">TERLAMBAT</span>
+                            <span className="text-[8px] text-amber-600 font-bold uppercase ml-1">Melebihi Batas</span>
                           </div>
                         ) : (
                           <div className="flex flex-col gap-1">
-                            <span className="w-fit px-3 py-1 bg-emerald-100 text-emerald-700 rounded-lg text-[9px] font-black uppercase tracking-widest border border-emerald-200">TEPAT WAKTU</span>
-                            <span className="text-[8px] text-emerald-400 font-bold uppercase ml-1">Dalam Radius</span>
+                            <span className="w-fit px-3 py-1 bg-emerald-600 text-white rounded-lg text-[9px] font-black uppercase tracking-widest shadow-xs">TEPAT WAKTU</span>
+                            <span className="text-[8px] text-emerald-600 font-bold uppercase ml-1">Dalam Radius</span>
                           </div>
                         )
                       ) : !item.isWorkingDay ? (

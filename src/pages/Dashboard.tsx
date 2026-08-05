@@ -49,6 +49,7 @@ export default function Dashboard() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [showCamera, setShowCamera] = useState(false);
   const [selectedLocationIndex, setSelectedLocationIndex] = useState<number | null>(null);
+  const [selectedShiftOverride, setSelectedShiftOverride] = useState<string | null>(null);
   const [userRosters, setUserRosters] = useState<any[]>([]);
   
   // Bidang Roster State
@@ -122,65 +123,69 @@ export default function Dashboard() {
   const activeShiftInfo = useMemo(() => {
     if (!settings) return null;
     
+    // 0. Manual shift selection by user
+    if (selectedShiftOverride) {
+      const manualInfo = getCurrentShift(now, settings.shifts, selectedShiftOverride);
+      if (manualInfo) return manualInfo;
+    }
+    
     // 1. Check today's assigned roster
     const todayStr = format(now, 'yyyy-MM-dd');
     const todayRoster = userRosters.find(r => r.date === todayStr);
-    const infoToday = getCurrentShift(now, settings.shifts, todayRoster?.shiftName);
-    
-    // If it's a normal day shift or we are in the start part of overnight shift
-    if (infoToday && (infoToday.shift || (infoToday as any).isOff)) {
-      return infoToday;
+    if (todayRoster?.shiftName) {
+      const infoToday = getCurrentShift(now, settings.shifts, todayRoster.shiftName);
+      if (infoToday && (infoToday.shift || (infoToday as any).isOff)) {
+        return infoToday;
+      }
     }
 
     // 2. Check yesterday's roster (for the "tail" of an overnight shift)
     const yesterdayStr = format(addMinutes(now, -1440), 'yyyy-MM-dd');
     const yesterdayRoster = userRosters.find(r => r.date === yesterdayStr);
-    const infoYesterday = getCurrentShift(now, settings.shifts, yesterdayRoster?.shiftName);
-
-    if (infoYesterday && infoYesterday.shift) {
-       // Only return if it's actually an overnight shift and we are in the late part
-       const isOvernight = infoYesterday.shift.startTime > infoYesterday.shift.endTime;
-       if (isOvernight && infoYesterday.logicalDate === yesterdayStr) {
-         return infoYesterday;
-       }
-    }
-
-    // 3. Check if a shift is starting soon (30 min buffer for notification only)
-    if (!infoToday && todayRoster?.shiftName) {
-      const shift = settings.shifts.find((s: any) => s.name === todayRoster.shiftName);
-      if (shift) {
-        const start = parse(shift.startTime, 'HH:mm', now);
-        const buffer = subMinutes(start, 30);
-        if (now >= buffer && now < start) {
-          return { shift, logicalDate: todayStr, isUpcoming: true };
+    if (yesterdayRoster?.shiftName) {
+      const infoYesterday = getCurrentShift(now, settings.shifts, yesterdayRoster.shiftName);
+      if (infoYesterday && infoYesterday.shift) {
+        const isOvernight = infoYesterday.shift.startTime > infoYesterday.shift.endTime;
+        if (isOvernight && infoYesterday.logicalDate === yesterdayStr) {
+          return infoYesterday;
         }
       }
     }
 
-    return null;
-  }, [now, settings, userRosters]);
+    // 3. Auto-detect from all shifts based on current time
+    return getCurrentShift(now, settings.shifts);
+  }, [now, settings, userRosters, selectedShiftOverride]);
 
   const currentShift = activeShiftInfo?.shift;
   const logicalDate = activeShiftInfo?.logicalDate;
   const isOffDay = (activeShiftInfo as any)?.isOff;
 
+  // Shift efektif yang sedang dihadapi (jika belum absen pulang, gunakan shift dari record absen datang)
+  const effectiveShift = useMemo(() => {
+    if (hasAttendedToday && !hasCheckedOutToday && attendanceData?.shiftName && settings?.shifts) {
+      const pendingShift = settings.shifts.find((s: any) => s.name === attendanceData.shiftName);
+      if (pendingShift) return pendingShift;
+    }
+    return currentShift;
+  }, [hasAttendedToday, hasCheckedOutToday, attendanceData?.shiftName, settings?.shifts, currentShift]);
+
   const checkOutInfo = useMemo(() => {
-    if (!currentShift || !now) return null;
-    return getCheckOutStatus(now, currentShift);
-  }, [now, currentShift]);
+    if (!effectiveShift || !now) return null;
+    return getCheckOutStatus(now, effectiveShift);
+  }, [now, effectiveShift]);
 
   // Aturan Khusus Jumat: window absen pulang dimajukan ke sekitar 10:30
   const fridayEarlyInfo = useMemo(() => {
-    if (!currentShift || !settings) return null;
+    if (!effectiveShift || !settings) return null;
     return getFridayEarlyCheckOutStatus(
       now,
-      currentShift,
+      effectiveShift,
       settings.fridayEarlyEnd || null,
       profile?.bidang || null
     );
-  }, [now, currentShift, settings, profile?.bidang]);
+  }, [now, effectiveShift, settings, profile?.bidang]);
 
-  // Apakah window absen pulang sedang aktif (normal ATAU Jumat khusus)
+  // Apakah window absen pulang sedang aktif (normal ATAU terlambat ATAU Jumat khusus)
   const isEffectiveCheckOutWindow =
     checkOutInfo?.isCheckOutWindow || fridayEarlyInfo?.isCheckOutWindow || false;
 
@@ -238,15 +243,35 @@ export default function Dashboard() {
     };
   }, [user]);
 
-  // Active Event calculation
+  // Check if current user is assigned to event
+  const isAssignedToActiveEvent = useMemo(() => {
+    if (!settings?.event?.isActive) return false;
+    const assigned = (settings.event.assignedUserIds || []) as string[];
+    if (!Array.isArray(assigned) || assigned.length === 0) return false;
+    
+    const userUid = user?.uid;
+    const userEmail = user?.email?.toLowerCase().trim();
+    const profileId = (profile as any)?.id;
+    
+    return Boolean(
+      (userUid && assigned.includes(userUid)) ||
+      (userEmail && assigned.includes(userEmail)) ||
+      (profileId && assigned.includes(profileId))
+    );
+  }, [settings?.event, user, profile]);
+
+  // Active Event calculation: only active for this user if they are assigned by Admin!
   const activeEvent = useMemo(() => {
     if (!settings?.event?.isActive) return null;
     const today = format(now, 'yyyy-MM-dd');
     const start = settings.event.startDate || settings.event.date;
     const end = settings.event.endDate || settings.event.date;
-    if (start && end && today >= start && today <= end) return settings.event;
+    if (start && end && today >= start && today <= end) {
+      if (!isAssignedToActiveEvent) return null;
+      return settings.event;
+    }
     return null;
-  }, [settings, now]);
+  }, [settings, now, isAssignedToActiveEvent]);
 
   const isEventTime = useMemo(() => {
     if (!activeEvent) return false;
@@ -367,27 +392,43 @@ export default function Dashboard() {
     }
 
     // Check regular shift attendance:
-    // 1. First try exact match with current detected shift
-    // 2. If not found, fallback to ANY shift record for today
-    //    (prevents state reset when shift boundary is crossed, e.g. 14:00 Pagi→Sore transition)
+    const yesterdayStr = format(addMinutes(now, -1440), 'yyyy-MM-dd');
+
+    // 1. Jika pengguna belum secara manual memilih shift lain, prioritaskan absen yang belum absen pulang
+    if (!selectedShiftOverride) {
+      const pendingCheckoutLog = snap.docs.find(d => {
+        const data = d.data();
+        const isDateMatch = data.date === targetDate || data.date === yesterdayStr;
+        return isDateMatch && !data.isLeave && !data.isEvent && data.shiftName && !data.checkOutTimestamp;
+      });
+
+      if (pendingCheckoutLog) {
+        const data = pendingCheckoutLog.data();
+        setAttendanceData(data);
+        setHasAttendedToday(true);
+        setHasCheckedOutToday(false);
+        if (data.timestamp) {
+          setRecordedTime(data.timestamp.toDate ? data.timestamp.toDate() : new Date(data.timestamp));
+        }
+        setCheckOutRecordedTime(null);
+        return;
+      }
+    }
+
+    // 2. Cek absen spesifik sesuai targetShift
     if (!targetShift) {
       setHasAttendedToday(false);
+      setAttendanceData(null);
+      setHasCheckedOutToday(false);
+      setCheckOutRecordedTime(null);
       return;
     }
 
-    let shiftLog = snap.docs.find(d => {
+    const shiftLog = snap.docs.find(d => {
       const data = d.data();
       return data.date === targetDate && data.shiftName === targetShift && !data.isEvent;
     });
 
-    // Fallback: if no exact match, look for any non-checkout shift record for today
-    if (!shiftLog) {
-      shiftLog = snap.docs.find(d => {
-        const data = d.data();
-        return data.date === targetDate && !data.isLeave && !data.isEvent && data.shiftName;
-      });
-    }
-    
     if (shiftLog) {
       const data = shiftLog.data();
       setAttendanceData(data);
@@ -512,6 +553,9 @@ export default function Dashboard() {
         const isEventAttendance = !!(activeEvent && (locationStats as any).isEventMatch);
 
         if (isEventAttendance) {
+          if (!isAssignedToActiveEvent) {
+            throw new Error(`Anda tidak terdaftar dalam penugasan acara "${settings?.event?.name || 'Khusus'}".`);
+          }
           // Validasi waktu acara
           if (timeStr < activeEvent.startTime) {
             throw new Error(`Absen acara belum dibuka. Mulai pukul ${activeEvent.startTime} WIB`);
@@ -547,33 +591,37 @@ export default function Dashboard() {
         }
 
         // === MODE REGULER (dengan shift) ===
-        if (!currentShift || !logicalDate) {
+        const isCheckOut = hasAttendedToday && !hasCheckedOutToday && isEffectiveCheckOutWindow;
+        const targetShiftToUse = isCheckOut ? (effectiveShift || currentShift) : currentShift;
+
+        if (!targetShiftToUse) {
           throw new Error('Tidak ada jadwal shift aktif saat ini.');
         }
 
-        if ((activeShiftInfo as any)?.isUpcoming) {
-          throw new Error(`Absen Shift ${currentShift.name} belum dibuka. Silakan kembali pada pukul ${currentShift.startTime} WIB.`);
+        if (!isCheckOut && (activeShiftInfo as any)?.isUpcoming) {
+          throw new Error(`Absen Shift ${targetShiftToUse.name} belum dibuka. Silakan kembali pada pukul ${targetShiftToUse.startTime} WIB.`);
         }
 
-        const isCheckOut = hasAttendedToday && !hasCheckedOutToday && isEffectiveCheckOutWindow;
-        // Untuk checkout: gunakan shiftName dari record absen datang (bukan currentShift yang mungkin sudah berubah)
-        const effectiveShiftName = (isCheckOut && attendanceData?.shiftName) ? attendanceData.shiftName : currentShift.name;
-        const effectiveLogicalDate = (isCheckOut && attendanceData?.date) ? attendanceData.date : logicalDate;
+        // Untuk checkout: gunakan shiftName dan tanggal dari record absen datang
+        const effectiveShiftName = (isCheckOut && attendanceData?.shiftName) ? attendanceData.shiftName : targetShiftToUse.name;
+        const effectiveLogicalDate = (isCheckOut && attendanceData?.date) ? attendanceData.date : (logicalDate || format(now, 'yyyy-MM-dd'));
         const recordId = `${user.uid}_${effectiveLogicalDate}_${effectiveShiftName}`;
 
         if (isCheckOut) {
+          const isLate = checkOutInfo?.isLateCheckOut ?? false;
           const updateData = {
             checkOutTimestamp: serverTimestamp(),
             checkOutLocation: location,
             checkOutSelfieUrl: selfieUrl,
+            isLateCheckOut: isLate,
           };
           await setDoc(doc(db, 'attendance', recordId), updateData, { merge: true });
           setHasCheckedOutToday(true);
           setCheckOutRecordedTime(now);
           setAttendanceData((prev: any) => ({ ...prev, ...updateData, checkOutTimestamp: now }));
-          return `Absen Pulang Shift ${currentShift.name} berhasil dicatat!`;
+          return `Absen Pulang Shift ${effectiveShiftName}${isLate ? ' (Terlambat)' : ''} berhasil dicatat!`;
         } else {
-          const { isLate, graceThresholdDate, shiftStartDate } = getShiftStatus(now, currentShift);
+          const { isLate, graceThresholdDate, shiftStartDate } = getShiftStatus(now, currentShift!);
           const lateDuration = isLate ? Math.max(0, Math.floor((now.getTime() - shiftStartDate.getTime()) / 1000)) : 0;
           
           const record = {
@@ -986,7 +1034,9 @@ export default function Dashboard() {
                       </div>
                     </div>
                     <CardTitle className="text-emerald-800 text-lg font-black uppercase tracking-tight text-center">
-                      {isWaitingForCheckOut ? `Sudah Absen Datang ${attendanceData?.shiftName || ''}` : `Absen Selesai ${attendanceData?.shiftName || ''}`}
+                      {isWaitingForCheckOut 
+                        ? (attendanceData?.shiftName ? `Sudah Absen Datang Shift ${attendanceData.shiftName}` : 'Sudah Absen Datang')
+                        : (attendanceData?.shiftName ? `Absen Selesai Shift ${attendanceData.shiftName}` : 'Absen Selesai')}
                     </CardTitle>
                     <p className="text-emerald-600 text-xs font-semibold text-center leading-normal max-w-xs">
                       {isWaitingForCheckOut 
@@ -1045,7 +1095,7 @@ export default function Dashboard() {
             </CardHeader>
             
             <CardContent className="pt-6 pb-8 px-8 flex flex-col items-center justify-center space-y-6">
-              <div className="text-center space-y-1 mb-2">
+              <div className="text-center space-y-1 mb-1">
                 <h2 className="text-4xl font-black tabular-nums tracking-tighter text-slate-800">
                   {format(now, 'HH:mm:ss')}
                 </h2>
@@ -1053,6 +1103,43 @@ export default function Dashboard() {
                   {format(now, 'EEEE, dd-MM-yyyy', { locale: id })}
                 </p>
               </div>
+
+              {/* Shift Selector / Badges */}
+              {settings?.shifts && settings.shifts.length > 0 && !hasAttendedToday && (
+                <div className="flex flex-col items-center gap-1.5 w-full max-w-[280px]">
+                  <div className="flex items-center justify-center gap-1.5 w-full flex-wrap">
+                    {settings.shifts.map((s: any) => {
+                      const isActive = currentShift?.name === s.name;
+                      return (
+                        <button
+                          key={s.name}
+                          type="button"
+                          onClick={() => setSelectedShiftOverride(s.name)}
+                          className={cn(
+                            "px-2.5 py-1 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border shadow-xs flex items-center gap-1",
+                            isActive 
+                              ? "bg-red-600 text-white border-red-600 shadow-red-200 ring-2 ring-red-300 scale-105"
+                              : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100 opacity-70 hover:opacity-100"
+                          )}
+                        >
+                          <span>Shift {s.name}</span>
+                          <span className={cn("text-[8px] font-normal", isActive ? "text-red-100" : "text-slate-400")}>
+                            ({s.startTime})
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* Status Badge saat Absen Pulang */}
+              {hasAttendedToday && !hasCheckedOutToday && effectiveShift && (
+                <div className="flex items-center gap-2 px-3.5 py-1.5 bg-amber-50/90 border border-amber-200 rounded-full text-amber-800 text-[10px] font-black uppercase tracking-wider shadow-xs animate-in fade-in">
+                  <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                  <span>Absen Pulang: Shift {effectiveShift.name} ({effectiveShift.startTime} - {effectiveShift.endTime})</span>
+                </div>
+              )}
 
               {/* Selfie Viewport */}
               <div className="relative w-full max-w-[280px] aspect-[3/4] bg-slate-900 rounded-3xl overflow-hidden border-8 border-slate-100 shadow-inner group">
@@ -1113,9 +1200,13 @@ export default function Dashboard() {
                   else if (!isScheduleDay) toast.error('Hari ini bukan jadwal absen');
                   else handleAttendance();
                 }}
-                className="w-full max-w-[280px] h-auto bg-red-600 hover:bg-red-700 text-white rounded-2xl font-black shadow-xl shadow-red-200 transition-all active:scale-95 py-5 px-4 text-xl tracking-wide leading-none"
+                className="w-full max-w-[280px] h-auto bg-red-600 hover:bg-red-700 text-white rounded-2xl font-black shadow-xl shadow-red-200 transition-all active:scale-95 py-5 px-4 text-lg tracking-wide leading-none uppercase"
               >
-                {loading ? 'MEMPROSES...' : (hasAttendedToday && !hasCheckedOutToday ? 'ABSEN PULANG' : 'ABSEN DATANG')}
+                {loading 
+                  ? 'MEMPROSES...' 
+                  : (hasAttendedToday && !hasCheckedOutToday 
+                      ? `ABSEN PULANG SHIFT ${effectiveShift ? effectiveShift.name.toUpperCase() : ''}${checkOutInfo?.isLateCheckOut ? ' (TERLAMBAT)' : ''}`
+                      : `ABSEN DATANG ${currentShift ? `SHIFT ${currentShift.name.toUpperCase()}` : ''}`)}
               </Button>
 
               {/* Info jam khusus Jumat */}
@@ -1308,13 +1399,23 @@ export default function Dashboard() {
                 </div>
               )}
               {hasAttendedToday && !hasCheckedOutToday && checkOutInfo?.isCheckOutWindow && (
-                <div className="flex items-start gap-4 p-3 bg-emerald-50 border-l-4 border-emerald-500 rounded-lg text-xs leading-relaxed">
-                  <div className="w-2 h-2 bg-emerald-500 rounded-full mt-1.5 animate-bounce shrink-0"></div>
-                  <div>
-                     <p className="text-emerald-900 font-bold uppercase text-[10px] mb-0.5 tracking-tight">Waktunya Pulang</p>
-                     <p className="text-emerald-800 opacity-80">Jendela waktu absen pulang untuk Shift {currentShift?.name} telah terbuka. Silakan lakukan absen pulang.</p>
+                checkOutInfo.isLateCheckOut ? (
+                  <div className="flex items-start gap-4 p-3 bg-amber-50 border-l-4 border-amber-500 rounded-lg text-xs leading-relaxed">
+                    <div className="w-2 h-2 bg-amber-500 rounded-full mt-1.5 animate-pulse shrink-0"></div>
+                    <div>
+                       <p className="text-amber-900 font-bold uppercase text-[10px] mb-0.5 tracking-tight">Absen Pulang (Terlambat)</p>
+                       <p className="text-amber-800 opacity-80">Jadwal Shift {effectiveShift?.name} telah berakhir pada pukul {effectiveShift?.endTime} WIB. Anda tetap dapat melakukan absen pulang sekarang.</p>
+                    </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="flex items-start gap-4 p-3 bg-emerald-50 border-l-4 border-emerald-500 rounded-lg text-xs leading-relaxed">
+                    <div className="w-2 h-2 bg-emerald-500 rounded-full mt-1.5 animate-bounce shrink-0"></div>
+                    <div>
+                       <p className="text-emerald-900 font-bold uppercase text-[10px] mb-0.5 tracking-tight">Waktunya Pulang</p>
+                       <p className="text-emerald-800 opacity-80">Jendela waktu absen pulang untuk Shift {effectiveShift?.name} telah terbuka. Silakan lakukan absen pulang.</p>
+                    </div>
+                  </div>
+                )
               )}
               {/* Notifikasi khusus Jumat rawat jalan */}
               {fridayEarlyInfo && !hasCheckedOutToday && (

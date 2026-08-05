@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription } from '../components/ui/dialog';
 import { format, startOfMonth, endOfMonth, eachDayOfInterval, isAfter, isBefore, isSameDay, subMinutes, parse, addMinutes } from 'date-fns';
 import { id } from 'date-fns/locale';
-import { BarChart as BarChartIcon, Settings, Download, Search, MapPin, Check, Users, UserPlus, Upload, X, Smartphone, RefreshCw, Edit2, Trash2, FileText, CalendarRange, Clock, AlertTriangle, Navigation, Star, Paperclip, Copy } from 'lucide-react';
+import { BarChart as BarChartIcon, Settings, Download, Search, MapPin, Check, Users, UserPlus, Upload, X, Smartphone, RefreshCw, Edit2, Trash2, FileText, CalendarRange, Clock, AlertTriangle, Navigation, Star, Paperclip, Copy, CheckSquare, UserCheck, UserX, Save, Sliders } from 'lucide-react';
 import { toast } from 'sonner';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import * as XLSX from 'xlsx';
@@ -46,11 +46,15 @@ export default function Admin() {
       lat: 0,
       lng: 0,
       radius: 100,
+      assignedUserIds: [] as string[],
     } as any
   });
   const [savingSettings, setSavingSettings] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [eventSearchTerm, setEventSearchTerm] = useState('');
+  const [eventEmployeeSearch, setEventEmployeeSearch] = useState('');
+  const [eventBidangFilter, setEventBidangFilter] = useState('ALL');
+  const [eventTabSubView, setEventTabSubView] = useState<'config' | 'logs' | 'assigned'>('config');
   const [employeeSearchTerm, setEmployeeSearchTerm] = useState('');
   const [leaveEmployeeSearchTerm, setLeaveEmployeeSearchTerm] = useState('');
   const [dailySearchTerm, setDailySearchTerm] = useState('');
@@ -1134,6 +1138,73 @@ export default function Admin() {
     }
   };
 
+  const isEmployeeAssignedToEvent = (emp: any) => {
+    const assigned = (settings.event?.assignedUserIds || []) as string[];
+    if (!Array.isArray(assigned) || assigned.length === 0) return false;
+    const empId = emp.id || emp.uid;
+    const empEmail = emp.email?.toLowerCase().trim();
+    return Boolean(
+      (empId && assigned.includes(empId)) ||
+      (emp.uid && assigned.includes(emp.uid)) ||
+      (empEmail && assigned.includes(empEmail))
+    );
+  };
+
+  const toggleEmployeeEventAssignment = (emp: any) => {
+    const currentAssigned = (((settings as any).event?.assignedUserIds || []) as string[]).slice();
+    const empId = emp.id || emp.uid;
+    const empEmail = emp.email?.toLowerCase().trim();
+    const isCurrently = isEmployeeAssignedToEvent(emp);
+
+    let nextAssigned: string[];
+    if (isCurrently) {
+      nextAssigned = currentAssigned.filter(
+        id => id !== empId && id !== emp.uid && id !== empEmail
+      );
+    } else {
+      nextAssigned = [...currentAssigned];
+      if (empId && !nextAssigned.includes(empId)) nextAssigned.push(empId);
+      if (empEmail && !nextAssigned.includes(empEmail)) nextAssigned.push(empEmail);
+    }
+
+    setSettings({
+      ...settings,
+      event: {
+        ...((settings as any).event || {}),
+        assignedUserIds: nextAssigned
+      }
+    } as any);
+  };
+
+  const handleSelectAllEventEmployees = (listToSelect: any[]) => {
+    const currentAssigned = new Set(((settings as any).event?.assignedUserIds || []) as string[]);
+    listToSelect.forEach(emp => {
+      const empId = emp.id || emp.uid;
+      const empEmail = emp.email?.toLowerCase().trim();
+      if (empId) currentAssigned.add(empId);
+      if (empEmail) currentAssigned.add(empEmail);
+    });
+    setSettings({
+      ...settings,
+      event: {
+        ...((settings as any).event || {}),
+        assignedUserIds: Array.from(currentAssigned)
+      }
+    } as any);
+    toast.success(`${listToSelect.length} pegawai ditambahkan ke penugasan acara`);
+  };
+
+  const handleClearAllEventEmployees = () => {
+    setSettings({
+      ...settings,
+      event: {
+        ...((settings as any).event || {}),
+        assignedUserIds: []
+      }
+    } as any);
+    toast.info('Daftar penugasan acara dikosongkan');
+  };
+
   const copyToClipboard = (text: string | number | undefined | null, label: string) => {
     if (!text) return;
     const textStr = text.toString();
@@ -1219,11 +1290,16 @@ export default function Admin() {
           lng: Number(loc.lng),
           radius: Number(loc.radius) || 100
         })),
-        shifts: settings.shifts || [
-          { name: 'Pagi', startTime: '07:30', endTime: '13:30' },
-          { name: 'Sore', startTime: '13:30', endTime: '19:30' },
-          { name: 'Malam', startTime: '19:30', endTime: '07:30' },
-        ],
+        shifts: (settings.shifts || [
+          { name: 'Pagi', startTime: '07:00', endTime: '14:00', toleranceMinutes: 30 },
+          { name: 'Sore', startTime: '14:00', endTime: '21:00', toleranceMinutes: 30 },
+          { name: 'Malam', startTime: '21:00', endTime: '07:00', toleranceMinutes: 30 },
+        ]).map((s: any) => ({
+          name: s.name,
+          startTime: s.startTime,
+          endTime: s.endTime,
+          toleranceMinutes: isNaN(Number(s.toleranceMinutes)) ? 30 : Number(s.toleranceMinutes)
+        })),
         fridayEarlyEnd: {
           enabled: (settings as any).fridayEarlyEnd?.enabled || false,
           checkOutTime: (settings as any).fridayEarlyEnd?.checkOutTime || '10:30',
@@ -1239,6 +1315,9 @@ export default function Admin() {
           lat: Number((settings as any).event?.lat) || 0,
           lng: Number((settings as any).event?.lng) || 0,
           radius: Number((settings as any).event?.radius) || 100,
+          assignedUserIds: Array.isArray((settings as any).event?.assignedUserIds)
+            ? (settings as any).event.assignedUserIds
+            : [],
         }
       };
       
@@ -1440,7 +1519,7 @@ export default function Admin() {
             <Users size={14} className="mr-2" /> Rekap Data
           </TabsTrigger>
           <TabsTrigger id="trigger-acara" value="acara" className="font-black text-[10px] py-2 uppercase tracking-widest data-[state=active]:bg-white data-[state=active]:text-red-600 data-[state=active]:shadow-sm rounded-lg transition-all shrink-0">
-            <Star size={14} className="mr-2 text-amber-500 fill-amber-500" /> Rekap Acara
+            <Star size={14} className="mr-2 text-amber-500 fill-amber-500" /> ACARA LUAR
           </TabsTrigger>
           <TabsTrigger id="trigger-laporan" value="laporan" className="font-black text-[10px] py-2 uppercase tracking-widest data-[state=active]:bg-white data-[state=active]:text-red-600 data-[state=active]:shadow-sm rounded-lg transition-all shrink-0">
             <FileText size={14} className="mr-2" /> Laporan
@@ -1595,9 +1674,9 @@ export default function Admin() {
                             );
                           })()
                         ) : log.isLate ? (
-                          <span className="px-2 py-0.5 bg-rose-100 text-rose-700 rounded-full text-[9px] font-black uppercase tracking-tighter">TERLAMBAT</span>
+                          <span className="px-2 py-0.5 bg-amber-500 text-white rounded-full text-[9px] font-black uppercase tracking-tighter shadow-xs">TERLAMBAT</span>
                         ) : (
-                          <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-[9px] font-black uppercase tracking-tighter">TEPAT WAKTU</span>
+                          <span className="px-2 py-0.5 bg-emerald-600 text-white rounded-full text-[9px] font-black uppercase tracking-tighter shadow-xs">TEPAT WAKTU</span>
                         )}
                       </TableCell>
                       <TableCell className="text-right py-4">
@@ -1623,121 +1702,758 @@ export default function Admin() {
         </TabsContent>
 
         <TabsContent value="acara" className="space-y-6 mt-6">
-          {/* Stats Summary Event */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Card className="border border-slate-200 shadow-sm bg-white overflow-hidden group">
-              <div className="p-4 flex flex-col justify-center border-l-4 border-amber-500">
-                <p className="text-[9px] uppercase font-black text-slate-400 tracking-widest mb-1 group-hover:text-red-600 transition-colors">Jumlah Absen Acara</p>
-                <div className="flex items-baseline gap-1">
-                  <h3 className="text-3xl font-black text-slate-800 tabular-nums">{logs.filter(l => l.isEvent).length}</h3>
-                  <span className="text-[10px] font-bold text-slate-400 font-mono">REKAMAN</span>
-                </div>
+          {/* Header Acara Luar */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs">
+            <div className="flex items-center gap-3.5">
+              <div className="w-11 h-11 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-600 shadow-xs">
+                <Star size={22} className="fill-amber-500 text-amber-500" />
               </div>
-            </Card>
-            {settings.event?.isActive && (
-              <Card className="border border-slate-200 shadow-sm bg-white overflow-hidden md:col-span-2">
-                <div className="p-4 flex items-center justify-between">
-                  <div>
-                    <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-[8px] font-black uppercase tracking-widest">Acara Aktif</span>
-                    <h4 className="text-sm font-black text-slate-800 uppercase mt-1 flex items-center gap-1.5"><Star size={14} className="text-amber-500 fill-amber-500" />{settings.event.name}</h4>
-                    <p className="text-[9px] text-slate-400 font-bold uppercase mt-1">Tanggal: {settings.event.startDate} s/d {settings.event.endDate} | Jam: {settings.event.startTime} - {settings.event.endTime} WIB</p>
-                  </div>
-                </div>
-              </Card>
+              <div>
+                <h3 className="text-base font-black text-slate-800 uppercase tracking-tight flex items-center gap-2">
+                  Manajemen & Rekap Acara Luar
+                </h3>
+                <p className="text-xs text-slate-400 font-medium mt-0.5">
+                  Atur konfigurasi acara luar, tentukan pegawai yang ditugaskan, dan pantau log kehadiran presensi acara.
+                </p>
+              </div>
+            </div>
+            {settings.event?.isActive ? (
+              <Badge className="bg-emerald-500 hover:bg-emerald-600 text-white font-black text-[10px] uppercase tracking-wider px-3 py-1 flex items-center gap-1.5 self-start sm:self-auto shadow-xs">
+                <span className="w-2 h-2 rounded-full bg-white animate-ping" />
+                Mode Acara Aktif
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="text-slate-400 border-slate-200 text-[10px] font-bold uppercase tracking-wider px-3 py-1 self-start sm:self-auto">
+                Mode Acara Nonaktif
+              </Badge>
             )}
           </div>
 
-          {/* Action Header Event */}
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <div className="flex gap-2 items-center">
-              <Input type="month" value={reportMonth} onChange={(e) => setReportMonth(e.target.value)} className="h-9 font-mono text-xs w-40 bg-white" />
-              <Button onClick={exportLaporanAcara} size="sm" variant="outline" className="h-9 border-slate-200 shadow-sm text-[10px] font-black uppercase text-red-600 hover:text-white hover:bg-red-600">
-                <Download size={14} className="mr-1" /> Ekspor Absen Acara
-              </Button>
+          {/* Stats Summary Event */}
+          {(() => {
+            const assignedList = employees.filter(emp => isEmployeeAssignedToEvent(emp));
+            const attendedUserEmails = new Set(
+              logs
+                .filter(l => l.isEvent && l.date.startsWith(reportMonth))
+                .map(l => l.userEmail?.toLowerCase().trim())
+                .filter(Boolean)
+            );
+            const attendedCount = assignedList.filter(emp => attendedUserEmails.has(emp.email?.toLowerCase().trim())).length;
+
+            return (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <Card className="border border-slate-200 shadow-xs bg-white overflow-hidden group">
+                  <div className="p-4 flex flex-col justify-center border-l-4 border-amber-500">
+                    <p className="text-[9px] uppercase font-black text-slate-400 tracking-widest mb-1 group-hover:text-red-600 transition-colors">Jumlah Absen Acara ({reportMonth})</p>
+                    <div className="flex items-baseline gap-1">
+                      <h3 className="text-3xl font-black text-slate-800 tabular-nums">{logs.filter(l => l.isEvent && l.date.startsWith(reportMonth)).length}</h3>
+                      <span className="text-[10px] font-bold text-slate-400 font-mono">REKAMAN</span>
+                    </div>
+                  </div>
+                </Card>
+
+                <Card className="border border-slate-200 shadow-xs bg-white overflow-hidden group">
+                  <div className="p-4 flex flex-col justify-center border-l-4 border-emerald-500">
+                    <p className="text-[9px] uppercase font-black text-slate-400 tracking-widest mb-1 group-hover:text-emerald-600 transition-colors">Pegawai Ditugaskan</p>
+                    <div className="flex items-baseline gap-1">
+                      <h3 className="text-3xl font-black text-slate-800 tabular-nums">{assignedList.length}</h3>
+                      <span className="text-[10px] font-bold text-slate-400 font-mono">ORANG</span>
+                      {assignedList.length > 0 && (
+                        <span className="text-[10px] font-bold text-emerald-600 ml-2 font-mono">
+                          ({attendedCount} Hadir)
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                </Card>
+
+                {settings.event?.isActive ? (
+                  <Card className="border border-slate-200 shadow-xs bg-white overflow-hidden">
+                    <div className="p-4 flex flex-col justify-between h-full border-l-4 border-blue-500">
+                      <div>
+                        <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded-full text-[8px] font-black uppercase tracking-widest">Acara Berlangsung</span>
+                        <h4 className="text-xs font-black text-slate-800 uppercase mt-1 flex items-center gap-1.5 truncate"><Star size={13} className="text-amber-500 fill-amber-500 shrink-0" />{settings.event.name || 'Acara Khusus'}</h4>
+                        <p className="text-[9px] text-slate-400 font-bold uppercase mt-0.5 truncate">{settings.event.startDate} s/d {settings.event.endDate} | {settings.event.startTime}-{settings.event.endTime} WIB</p>
+                      </div>
+                    </div>
+                  </Card>
+                ) : (
+                  <Card className="border border-slate-200 shadow-xs bg-white overflow-hidden">
+                    <div className="p-4 flex flex-col justify-center h-full border-l-4 border-slate-300">
+                      <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Status Acara</span>
+                      <p className="text-xs font-bold text-slate-500 mt-1">Mode Acara Tidak Aktif</p>
+                    </div>
+                  </Card>
+                )}
+              </div>
+            );
+          })()}
+
+          {/* Sub Navigation & Action Header Event */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-2">
+            <div className="flex flex-wrap gap-2 items-center">
+              <div className="inline-flex rounded-xl border border-slate-200 bg-slate-100/90 p-1 shadow-xs">
+                <button
+                  type="button"
+                  onClick={() => setEventTabSubView('config')}
+                  className={cn(
+                    "px-3.5 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all flex items-center gap-1.5",
+                    eventTabSubView === 'config' ? "bg-white text-slate-900 shadow-xs font-black" : "text-slate-500 hover:text-slate-800 font-bold"
+                  )}
+                >
+                  <Sliders size={13} className="text-amber-500" /> Pengaturan & Petugas
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEventTabSubView('logs')}
+                  className={cn(
+                    "px-3.5 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all flex items-center gap-1.5",
+                    eventTabSubView === 'logs' ? "bg-white text-slate-900 shadow-xs font-black" : "text-slate-500 hover:text-slate-800 font-bold"
+                  )}
+                >
+                  <FileText size={13} /> Log Absen Masuk ({filteredEventLogs.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEventTabSubView('assigned')}
+                  className={cn(
+                    "px-3.5 py-1.5 text-[10px] font-black uppercase tracking-wider rounded-lg transition-all flex items-center gap-1.5",
+                    eventTabSubView === 'assigned' ? "bg-white text-slate-900 shadow-xs font-black" : "text-slate-500 hover:text-slate-800 font-bold"
+                  )}
+                >
+                  <UserCheck size={13} /> Status Petugas ({employees.filter(emp => isEmployeeAssignedToEvent(emp)).length})
+                </button>
+              </div>
+
+              {eventTabSubView !== 'config' && (
+                <>
+                  <Input type="month" value={reportMonth} onChange={(e) => setReportMonth(e.target.value)} className="h-8 font-mono text-xs w-36 bg-white" />
+                  <Button onClick={exportLaporanAcara} size="sm" variant="outline" className="h-8 border-slate-200 shadow-xs text-[10px] font-black uppercase text-red-600 hover:text-white hover:bg-red-600">
+                    <Download size={13} className="mr-1" /> Ekspor Excel
+                  </Button>
+                </>
+              )}
             </div>
-            <div className="relative w-full sm:w-64">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-3.5 h-3.5" />
-              <Input 
-                placeholder="Cari nama, email, acara..." 
-                className="pl-9 h-8 bg-white border-slate-200 text-xs font-medium placeholder:text-slate-300 focus-visible:ring-red-500" 
-                value={eventSearchTerm}
-                onChange={(e) => setEventSearchTerm(e.target.value)}
-              />
-            </div>
+
+            {eventTabSubView !== 'config' && (
+              <div className="relative w-full sm:w-64">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-3.5 h-3.5" />
+                <Input 
+                  placeholder="Cari nama, email, acara..." 
+                  className="pl-9 h-8 bg-white border-slate-200 text-xs font-medium placeholder:text-slate-300 focus-visible:ring-red-500" 
+                  value={eventSearchTerm}
+                  onChange={(e) => setEventSearchTerm(e.target.value)}
+                />
+              </div>
+            )}
           </div>
 
-          {/* Event Logs Table */}
-          <Card className="border border-slate-200 shadow-sm overflow-hidden bg-white">
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader className="bg-slate-50/80">
-                  <TableRow className="border-b border-slate-200">
-                    <TableHead className="font-black text-[9px] uppercase tracking-widest py-4">Identitas Pegawai</TableHead>
-                    <TableHead className="font-black text-[9px] uppercase tracking-widest py-4">Nama Acara</TableHead>
-                    <TableHead className="font-black text-[9px] uppercase tracking-widest py-4">Tanggal</TableHead>
-                    <TableHead className="font-black text-[9px] uppercase tracking-widest py-4">Waktu Absen</TableHead>
-                    <TableHead className="font-black text-[9px] uppercase tracking-widest py-4">Koordinat GPS</TableHead>
-                    <TableHead className="font-black text-[9px] uppercase tracking-widest py-4 text-right">Selfie</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredEventLogs.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={6} className="py-8 text-center text-xs font-medium text-slate-400 uppercase tracking-widest">Tidak ada rekaman absen acara</TableCell>
-                    </TableRow>
-                  ) : (
-                    filteredEventLogs.map((log) => (
-                      <TableRow key={log.id} className="group hover:bg-red-50/30 transition-colors border-b border-slate-100 last:border-0 italic">
-                        <TableCell className="py-4">
-                          <p className="font-black text-slate-800 text-[11px] leading-tight uppercase">{log.userName}</p>
-                          <p className="text-[9px] text-slate-400 font-mono lower-case tracking-tight">{log.userEmail}</p>
-                        </TableCell>
-                        <TableCell className="py-4">
-                          <Badge variant="outline" className="text-[9px] font-black uppercase border-amber-200 text-amber-700 bg-amber-50 gap-1">
-                            <Star size={10} className="fill-amber-500 text-amber-500" />
-                            {log.eventName || 'Acara Khusus'}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="py-4">
-                          <p className="text-[10px] font-black text-slate-700 tabular-nums leading-tight uppercase font-mono">
-                            {(() => {
-                              const [y, m, d] = log.date.split('-');
-                              return `${d}-${m}-${y}`;
-                            })()}
-                          </p>
-                        </TableCell>
-                        <TableCell className="py-4">
-                          <p className="text-[10px] font-black text-slate-700 tabular-nums leading-tight uppercase font-mono">
-                            {format(log.timestamp?.toDate ? log.timestamp.toDate() : new Date(log.timestamp), 'HH:mm:ss')}
-                          </p>
-                        </TableCell>
-                        <TableCell className="py-4">
-                          <span className="inline-flex items-center gap-1 text-[10px] text-slate-500 font-mono">
-                            <MapPin size={12} className="text-red-500" />
-                            {log.location?.latitude?.toFixed(4)}, {log.location?.longitude?.toFixed(4)}
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-right py-4">
-                          <div className="inline-block">
-                            <div 
-                              onClick={() => log.selfieUrl && setSelectedPhoto(log.selfieUrl)}
-                              className={`h-10 w-10 rounded-lg overflow-hidden border border-slate-200 shadow-sm transition-all hover:ring-2 ring-red-500 scale-95 hover:scale-100 ${log.selfieUrl ? 'cursor-pointer' : ''}`}
-                            >
-                              {log.selfieUrl ? (
-                                <img src={log.selfieUrl} alt="Selfie" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
-                              ) : (
-                                <div className="w-full h-full bg-slate-100 flex items-center justify-center text-[8px] font-black text-slate-300 uppercase">Tidak Ada Foto</div>
-                              )}
-                            </div>
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    ))
+          {/* SubView 1: CONFIGURATION & EMPLOYEE ASSIGNMENT */}
+          {eventTabSubView === 'config' && (
+            <Card className="border border-slate-200 shadow-xs bg-white overflow-hidden p-6 space-y-6">
+              <div className="space-y-4">
+                <CardHeader className="p-0">
+                  <CardTitle className="text-xs font-black text-slate-700 uppercase tracking-widest flex gap-2 items-center">
+                    <Star size={16} className="text-amber-500 fill-amber-500" /> Konfigurasi Acara Luar & Penugasan Petugas
+                  </CardTitle>
+                  <CardDescription className="text-xs font-medium text-slate-400 mt-1">
+                    Aktifkan mode acara luar, atur jadwal & lokasi GPS acara, dan daftarkan petugas yang berhak absen.
+                  </CardDescription>
+                </CardHeader>
+
+                <div className="p-4 sm:p-5 bg-amber-50/60 border border-amber-200 rounded-2xl space-y-5">
+                  {/* Toggle aktif */}
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs font-black uppercase text-amber-900 tracking-wider">Aktifkan Mode Acara Luar</p>
+                      <p className="text-[10px] text-amber-700 font-medium mt-0.5">Jika aktif, sistem akan mengizinkan presensi acara luar bagi pegawai yang terdaftar.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const current = (settings as any).event?.isActive || false;
+                        setSettings({
+                          ...settings,
+                          event: {
+                            ...((settings as any).event || {}),
+                            isActive: !current,
+                          }
+                        } as any);
+                      }}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
+                        (settings as any).event?.isActive ? 'bg-amber-500' : 'bg-slate-200'
+                      }`}
+                    >
+                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition-transform ${
+                        (settings as any).event?.isActive ? 'translate-x-6' : 'translate-x-1'
+                      }`} />
+                    </button>
+                  </div>
+
+                  {/* Status badge */}
+                  {(settings as any).event?.isActive && (
+                    <div className="flex items-center gap-2 px-3 py-2 bg-amber-500/20 rounded-lg border border-amber-300">
+                      <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse" />
+                      <p className="text-[10px] font-black text-amber-800 uppercase tracking-widest">Mode Acara Luar Sedang Aktif — Pegawai Terdaftar Dapat Melakukan Absensi Acara</p>
+                    </div>
                   )}
-                </TableBody>
-              </Table>
-            </div>
-          </Card>
+
+                  {/* Form detail acara */}
+                  <div className="space-y-4">
+                    {/* Nama acara */}
+                    <div className="space-y-1.5">
+                      <Label className="text-[10px] font-black uppercase text-amber-800">Nama Acara Luar</Label>
+                      <input
+                        type="text"
+                        value={(settings as any).event?.name || ''}
+                        onChange={(e) => setSettings({
+                          ...settings,
+                          event: { ...((settings as any).event || {}), name: e.target.value }
+                        } as any)}
+                        placeholder="Contoh: Posko Siaga Bencana / Rapat Koordinasi PMI 2026"
+                        className="w-full h-9 px-3 rounded-lg border border-amber-200 bg-white text-xs font-semibold text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                      />
+                    </div>
+
+                    {/* Tanggal acara */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <Label className="text-[10px] font-black uppercase text-amber-800">Tanggal Mulai</Label>
+                        <Input
+                          type="date"
+                          value={(settings as any).event?.startDate || ''}
+                          onChange={(e) => setSettings({
+                            ...settings,
+                            event: { ...((settings as any).event || {}), startDate: e.target.value }
+                          } as any)}
+                          className="h-9 text-xs bg-white border-amber-200 focus-visible:ring-amber-400"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-[10px] font-black uppercase text-amber-800">Tanggal Selesai</Label>
+                        <Input
+                          type="date"
+                          value={(settings as any).event?.endDate || ''}
+                          onChange={(e) => setSettings({
+                            ...settings,
+                            event: { ...((settings as any).event || {}), endDate: e.target.value }
+                          } as any)}
+                          className="h-9 text-xs bg-white border-amber-200 focus-visible:ring-amber-400"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Waktu absen acara */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="space-y-1.5">
+                        <Label className="text-[10px] font-black uppercase text-amber-800">Jam Buka Absen</Label>
+                        <Input
+                          type="time"
+                          value={(settings as any).event?.startTime || '08:00'}
+                          onChange={(e) => setSettings({
+                            ...settings,
+                            event: { ...((settings as any).event || {}), startTime: e.target.value }
+                          } as any)}
+                          className="h-9 text-xs font-mono bg-white border-amber-200 focus-visible:ring-amber-400"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-[10px] font-black uppercase text-amber-800">Jam Tutup Absen</Label>
+                        <Input
+                          type="time"
+                          value={(settings as any).event?.endTime || '17:00'}
+                          onChange={(e) => setSettings({
+                            ...settings,
+                            event: { ...((settings as any).event || {}), endTime: e.target.value }
+                          } as any)}
+                          className="h-9 text-xs font-mono bg-white border-amber-200 focus-visible:ring-amber-400"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Lokasi GPS acara */}
+                    <div className="space-y-2 pt-2 border-t border-amber-200/80">
+                      <Label className="text-[10px] font-black uppercase text-amber-800 flex items-center gap-1.5">
+                        <MapPin size={13} /> Titik Lokasi GPS Acara & Radius
+                      </Label>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div className="space-y-1">
+                          <Label className="text-[9px] font-bold text-amber-700 uppercase">Latitude</Label>
+                          <div className="relative flex items-center">
+                            <Input
+                              type="text"
+                              value={(settings as any).event?.lat || ''}
+                              onChange={(e) => setSettings({
+                                ...settings,
+                                event: { ...((settings as any).event || {}), lat: parseFloat(e.target.value) || 0 }
+                              } as any)}
+                              placeholder="-6.0000"
+                              className="h-8 pr-7 text-xs font-mono bg-white border-amber-200 focus-visible:ring-amber-400"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => copyToClipboard((settings as any).event?.lat, 'Latitude')}
+                              title="Salin Latitude"
+                              className="absolute right-1.5 h-6 w-6 p-1 rounded-md hover:bg-amber-100 text-amber-500 hover:text-amber-700 transition-colors flex items-center justify-center"
+                            >
+                              <Copy size={11} />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-[9px] font-bold text-amber-700 uppercase">Longitude</Label>
+                          <div className="relative flex items-center">
+                            <Input
+                              type="text"
+                              value={(settings as any).event?.lng || ''}
+                              onChange={(e) => setSettings({
+                                ...settings,
+                                event: { ...((settings as any).event || {}), lng: parseFloat(e.target.value) || 0 }
+                              } as any)}
+                              placeholder="106.0000"
+                              className="h-8 pr-7 text-xs font-mono bg-white border-amber-200 focus-visible:ring-amber-400"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => copyToClipboard((settings as any).event?.lng, 'Longitude')}
+                              title="Salin Longitude"
+                              className="absolute right-1.5 h-6 w-6 p-1 rounded-md hover:bg-amber-100 text-amber-500 hover:text-amber-700 transition-colors flex items-center justify-center"
+                            >
+                              <Copy size={11} />
+                            </button>
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <Label className="text-[9px] font-bold text-amber-700 uppercase">Radius (Meter)</Label>
+                          <Input
+                            type="number"
+                            value={(settings as any).event?.radius || 100}
+                            onChange={(e) => setSettings({
+                              ...settings,
+                              event: { ...((settings as any).event || {}), radius: parseInt(e.target.value) || 100 }
+                            } as any)}
+                            className="h-8 text-xs font-mono bg-white border-amber-200"
+                          />
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8 text-[9px] font-black uppercase tracking-widest border-amber-200 text-amber-800 bg-white hover:bg-amber-100/60"
+                        onClick={() => {
+                          if (navigator.geolocation) {
+                            navigator.geolocation.getCurrentPosition((pos) => {
+                              setSettings({
+                                ...settings,
+                                event: {
+                                  ...((settings as any).event || {}),
+                                  lat: parseFloat(pos.coords.latitude.toFixed(6)),
+                                  lng: parseFloat(pos.coords.longitude.toFixed(6)),
+                                }
+                              } as any);
+                              toast.success('Koordinat lokasi acara diset ke posisi Anda saat ini!');
+                            }, () => {
+                              toast.error('Gagal mendapatkan GPS. Pastikan izin lokasi aktif.');
+                            }, { enableHighAccuracy: true });
+                          }
+                        }}
+                      >
+                        <Navigation size={11} className="mr-1 text-amber-600" /> Gunakan Lokasi Saya Saat Ini
+                      </Button>
+                    </div>
+
+                    {/* === DAFTAR PENUGASAN PEGAWAI UNTUK ACARA === */}
+                    <div className="space-y-3 pt-3 border-t border-amber-200/80">
+                      {(() => {
+                        const filteredEmployeesForEvent = employees.filter(emp => {
+                          const matchesSearch = 
+                            (emp.displayName || emp.name || '').toLowerCase().includes(eventEmployeeSearch.toLowerCase()) ||
+                            (emp.email || '').toLowerCase().includes(eventEmployeeSearch.toLowerCase()) ||
+                            (emp.nip || '').toLowerCase().includes(eventEmployeeSearch.toLowerCase());
+                          const matchesBidang = eventBidangFilter === 'ALL' || (emp.bidang || '').toUpperCase() === eventBidangFilter.toUpperCase();
+                          return matchesSearch && matchesBidang;
+                        });
+                        const assignedEmployeesCount = employees.filter(emp => isEmployeeAssignedToEvent(emp)).length;
+
+                        return (
+                          <>
+                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                              <div>
+                                <Label className="text-[10px] font-black uppercase text-amber-900 flex items-center gap-1.5">
+                                  <Users size={14} className="text-amber-600" /> Penugasan Pegawai (Petugas Acara Luar)
+                                </Label>
+                                <p className="text-[9px] text-amber-700 font-medium">
+                                  Hanya pegawai yang ditugaskan yang dapat melakukan presensi di acara ini. Pegawai yang tidak ditugaskan tetap mengikuti jadwal shift / hari normal.
+                                </p>
+                              </div>
+                              <Badge className="bg-amber-600 hover:bg-amber-600 text-white font-black text-[9px] uppercase tracking-wider px-2.5 py-0.5 self-start sm:self-auto shadow-xs">
+                                {assignedEmployeesCount} Dari {employees.length} Pegawai Ditugaskan
+                              </Badge>
+                            </div>
+
+                            {/* Toolbar Pencarian & Aksi Cepat */}
+                            <div className="bg-amber-100/60 p-3 rounded-xl border border-amber-200/90 space-y-2.5">
+                              <div className="grid grid-cols-1 sm:grid-cols-12 gap-2">
+                                <div className="sm:col-span-7 relative">
+                                  <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 text-amber-500 w-3.5 h-3.5" />
+                                  <Input
+                                    placeholder="Cari nama, NIP, atau email pegawai..."
+                                    value={eventEmployeeSearch}
+                                    onChange={(e) => setEventEmployeeSearch(e.target.value)}
+                                    className="pl-8 h-8 text-xs bg-white border-amber-200 text-slate-700 placeholder:text-slate-400 focus-visible:ring-amber-400"
+                                  />
+                                </div>
+                                <div className="sm:col-span-5">
+                                  <select
+                                    value={eventBidangFilter}
+                                    onChange={(e) => setEventBidangFilter(e.target.value)}
+                                    aria-label="Filter Bidang"
+                                    className="w-full h-8 px-2.5 text-xs bg-white border border-amber-200 rounded-md font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                                  >
+                                    <option value="ALL">Semua Bidang ({employees.length})</option>
+                                    {departments.map(dept => {
+                                      const count = employees.filter(e => (e.bidang || '').toUpperCase() === dept.toUpperCase()).length;
+                                      return <option key={dept} value={dept}>{dept} ({count})</option>;
+                                    })}
+                                  </select>
+                                </div>
+                              </div>
+
+                              {/* Tombol aksi massal */}
+                              <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-amber-200/60">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleSelectAllEventEmployees(filteredEmployeesForEvent)}
+                                  className="h-7 px-2 text-[9px] font-black uppercase tracking-wider bg-white border-amber-300 text-amber-800 hover:bg-amber-200/50"
+                                >
+                                  <CheckSquare size={11} className="mr-1 text-emerald-600" />
+                                  Pilih Semua Hasil Filter ({filteredEmployeesForEvent.length})
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleSelectAllEventEmployees(employees)}
+                                  className="h-7 px-2 text-[9px] font-black uppercase tracking-wider bg-white border-amber-300 text-amber-800 hover:bg-amber-200/50"
+                                >
+                                  <Users size={11} className="mr-1 text-amber-600" />
+                                  Pilih Semua Pegawai ({employees.length})
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={handleClearAllEventEmployees}
+                                  disabled={assignedEmployeesCount === 0}
+                                  className="h-7 px-2 text-[9px] font-black uppercase tracking-wider bg-white border-amber-300 text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                                >
+                                  <X size={11} className="mr-1 text-rose-600" />
+                                  Kosongkan Pilihan
+                                </Button>
+                              </div>
+                            </div>
+
+                            {/* Chip ringkasan pegawai terpilih (jika ada) */}
+                            {assignedEmployeesCount > 0 && (
+                              <div className="space-y-1">
+                                <div className="flex items-center justify-between text-[9px] font-black uppercase text-amber-800">
+                                  <span>Pegawai Yang Telah Ditugaskan:</span>
+                                  <span className="text-amber-600 font-mono">Klik tanda silang (x) untuk mencoret</span>
+                                </div>
+                                <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto p-2 bg-white/90 rounded-xl border border-amber-200">
+                                  {employees.filter(emp => isEmployeeAssignedToEvent(emp)).map(emp => (
+                                    <Badge
+                                      key={emp.id || emp.uid}
+                                      variant="outline"
+                                      className="bg-amber-50 hover:bg-amber-100 border-amber-300 text-amber-900 text-[9px] font-bold py-0.5 pl-2 pr-1 gap-1 flex items-center shadow-xs"
+                                    >
+                                      <span>{emp.displayName || emp.name}</span>
+                                      <span className="text-[8px] text-amber-600 font-mono">({emp.bidang || 'Staff'})</span>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          toggleEmployeeEventAssignment(emp);
+                                        }}
+                                        className="w-3.5 h-3.5 rounded-full hover:bg-amber-200 flex items-center justify-center text-amber-800 ml-0.5"
+                                      >
+                                        <X size={9} />
+                                      </button>
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Daftar Checkbox Pegawai */}
+                            <div className="border border-amber-200 rounded-xl bg-white overflow-hidden shadow-xs">
+                              <div className="bg-amber-100/70 px-3 py-2 border-b border-amber-200 flex items-center justify-between text-[9px] font-black uppercase tracking-wider text-amber-900">
+                                <span>Daftar Pegawai ({filteredEmployeesForEvent.length})</span>
+                                <span>Status Penugasan</span>
+                              </div>
+                              <div className="max-h-64 overflow-y-auto divide-y divide-amber-100">
+                                {filteredEmployeesForEvent.length === 0 ? (
+                                  <div className="py-6 text-center text-xs text-amber-700 font-medium">
+                                    Tidak ada data pegawai yang sesuai dengan filter/pencarian.
+                                  </div>
+                                ) : (
+                                  filteredEmployeesForEvent.map(emp => {
+                                    const isAssigned = isEmployeeAssignedToEvent(emp);
+                                    return (
+                                      <div
+                                        key={emp.id || emp.uid}
+                                        onClick={() => toggleEmployeeEventAssignment(emp)}
+                                        className={cn(
+                                          "flex items-center justify-between px-3 py-2 text-xs cursor-pointer transition-colors select-none",
+                                          isAssigned ? "bg-amber-50/80 hover:bg-amber-100/70" : "hover:bg-slate-50"
+                                        )}
+                                      >
+                                        <div className="flex items-center gap-3 min-w-0">
+                                          <input
+                                            type="checkbox"
+                                            checked={isAssigned}
+                                            onChange={() => {}} // Handled by parent onClick
+                                            className="w-4 h-4 rounded border-amber-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
+                                          />
+                                          <div className="min-w-0">
+                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                              <p className="font-bold text-slate-800 text-xs truncate">{emp.displayName || emp.name || 'Pegawai'}</p>
+                                              {emp.nip && (
+                                                <span className="text-[9px] font-mono font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded">
+                                                  {emp.nip}
+                                                </span>
+                                              )}
+                                              <span className="text-[9px] font-bold text-amber-700 bg-amber-100/60 border border-amber-200 px-1.5 py-0.2 rounded uppercase">
+                                                {emp.bidang || 'Staff'}
+                                              </span>
+                                            </div>
+                                            <p className="text-[10px] text-slate-400 font-mono truncate">{emp.email || '-'}</p>
+                                          </div>
+                                        </div>
+                                        <div>
+                                          {isAssigned ? (
+                                            <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white text-[8px] font-black uppercase tracking-wider px-2 py-0.5">
+                                              Ditugaskan
+                                            </Badge>
+                                          ) : (
+                                            <Badge variant="outline" className="text-slate-400 border-slate-200 text-[8px] font-semibold uppercase tracking-wider px-2 py-0.5">
+                                              Tidak Ikut
+                                            </Badge>
+                                          )}
+                                        </div>
+                                      </div>
+                                    );
+                                  })
+                                )}
+                              </div>
+                            </div>
+                          </>
+                        );
+                      })()}
+                    </div>
+
+                    <p className="text-[9px] text-amber-700 font-bold italic bg-amber-100/50 p-2.5 rounded-xl border border-amber-200/80">
+                      * Mode Acara Luar aktif akan memperbolehkan absensi di luar jadwal reguler dan hari libur bagi pegawai yang ditugaskan, selama berada di dalam radius lokasi acara dan dalam jendela waktu yang ditentukan. Pegawai yang tidak ditugaskan tetap mengikuti jadwal shift normal.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Tombol Simpan Konfigurasi Acara Luar */}
+                <div className="flex justify-end pt-2">
+                  <Button
+                    type="button"
+                    onClick={saveSettings}
+                    disabled={savingSettings}
+                    className="h-10 px-6 bg-amber-600 hover:bg-amber-700 text-white font-black text-xs uppercase tracking-widest shadow-md shadow-amber-200 transition-all active:scale-95"
+                  >
+                    <Save size={14} className="mr-2" />
+                    {savingSettings ? 'Menyimpan Pengaturan...' : 'Simpan Pengaturan Acara Luar'}
+                  </Button>
+                </div>
+              </div>
+            </Card>
+          )}
+
+          {/* SubView 2: Event Logs Table */}
+          {eventTabSubView === 'logs' && (
+            <Card className="border border-slate-200 shadow-xs overflow-hidden bg-white">
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader className="bg-slate-50/80">
+                    <TableRow className="border-b border-slate-200">
+                      <TableHead className="font-black text-[9px] uppercase tracking-widest py-4">Identitas Pegawai</TableHead>
+                      <TableHead className="font-black text-[9px] uppercase tracking-widest py-4">Nama Acara</TableHead>
+                      <TableHead className="font-black text-[9px] uppercase tracking-widest py-4">Tanggal</TableHead>
+                      <TableHead className="font-black text-[9px] uppercase tracking-widest py-4">Waktu Absen</TableHead>
+                      <TableHead className="font-black text-[9px] uppercase tracking-widest py-4">Koordinat GPS</TableHead>
+                      <TableHead className="font-black text-[9px] uppercase tracking-widest py-4 text-right">Selfie</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredEventLogs.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="py-8 text-center text-xs font-medium text-slate-400 uppercase tracking-widest">Tidak ada rekaman absen acara</TableCell>
+                      </TableRow>
+                    ) : (
+                      filteredEventLogs.map((log) => (
+                        <TableRow key={log.id} className="group hover:bg-red-50/30 transition-colors border-b border-slate-100 last:border-0 italic">
+                          <TableCell className="py-4">
+                            <p className="font-black text-slate-800 text-[11px] leading-tight uppercase">{log.userName}</p>
+                            <p className="text-[9px] text-slate-400 font-mono lower-case tracking-tight">{log.userEmail}</p>
+                          </TableCell>
+                          <TableCell className="py-4">
+                            <Badge variant="outline" className="text-[9px] font-black uppercase bg-amber-50 text-amber-800 border-amber-300">
+                              <Star size={9} className="mr-1 fill-amber-500 text-amber-500" />
+                              {log.eventName || 'Acara Luar'}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="py-4 font-bold text-slate-700 text-xs">{log.date}</TableCell>
+                          <TableCell className="py-4 font-mono font-bold text-slate-800 text-xs">
+                            {format(log.timestamp?.toDate ? log.timestamp.toDate() : new Date(log.timestamp), 'HH:mm:ss')}
+                          </TableCell>
+                          <TableCell className="py-4 font-mono text-[9px] text-slate-400">
+                            {log.lat?.toFixed(5)}, {log.lng?.toFixed(5)}
+                          </TableCell>
+                          <TableCell className="text-right py-4">
+                            <div className="inline-block">
+                              <div 
+                                onClick={() => log.selfieUrl && setSelectedPhoto(log.selfieUrl)}
+                                className={`h-10 w-10 rounded-lg overflow-hidden border border-slate-200 shadow-xs transition-all hover:ring-2 ring-red-500 scale-95 hover:scale-100 ${log.selfieUrl ? 'cursor-pointer' : ''}`}
+                              >
+                                {log.selfieUrl ? (
+                                  <img src={log.selfieUrl} alt="Selfie" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                ) : (
+                                  <div className="w-full h-full bg-slate-100 flex items-center justify-center text-[8px] font-black text-slate-300 uppercase">Tidak Ada Foto</div>
+                                )}
+                              </div>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            </Card>
+          )}
+
+          {/* SubView 3: Assigned Officers Attendance Status */}
+          {eventTabSubView === 'assigned' && (
+            <Card className="border border-slate-200 shadow-xs overflow-hidden bg-white">
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader className="bg-slate-50/80">
+                    <TableRow className="border-b border-slate-200">
+                      <TableHead className="font-black text-[9px] uppercase tracking-widest py-3">Nama Pegawai</TableHead>
+                      <TableHead className="font-black text-[9px] uppercase tracking-widest py-3">NIP / ID</TableHead>
+                      <TableHead className="font-black text-[9px] uppercase tracking-widest py-3">Bidang</TableHead>
+                      <TableHead className="font-black text-[9px] uppercase tracking-widest py-3">Status Kehadiran</TableHead>
+                      <TableHead className="font-black text-[9px] uppercase tracking-widest py-3">Waktu Terakhir</TableHead>
+                      <TableHead className="font-black text-[9px] uppercase tracking-widest py-3 text-right">Foto Selfie</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {(() => {
+                      const assignedList = employees
+                        .filter(emp => isEmployeeAssignedToEvent(emp))
+                        .filter(emp => {
+                          if (!eventSearchTerm) return true;
+                          const term = eventSearchTerm.toLowerCase();
+                          return (
+                            (emp.displayName || emp.name || '').toLowerCase().includes(term) ||
+                            (emp.email || '').toLowerCase().includes(term) ||
+                            (emp.nip || '').toLowerCase().includes(term) ||
+                            (emp.bidang || '').toLowerCase().includes(term)
+                          );
+                        });
+
+                      if (assignedList.length === 0) {
+                        return (
+                          <TableRow>
+                            <TableCell colSpan={6} className="py-10 text-center text-xs font-medium text-slate-400 uppercase tracking-widest">
+                              {employees.some(emp => isEmployeeAssignedToEvent(emp))
+                                ? 'Tidak ada petugas cocok dengan pencarian'
+                                : 'Belum ada pegawai yang ditugaskan ke acara luar ini. Silakan atur di Tab Pengaturan & Petugas di atas.'}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      }
+
+                      return assignedList.map(emp => {
+                        const empEmail = emp.email?.toLowerCase().trim();
+                        const empId = emp.id || emp.uid;
+                        const empEventLogs = logs.filter(
+                          l => l.isEvent &&
+                            l.date.startsWith(reportMonth) &&
+                            (
+                              (empEmail && l.userEmail?.toLowerCase().trim() === empEmail) ||
+                              (empId && l.userId === empId)
+                            )
+                        );
+                        const latestLog = empEventLogs[0];
+                        const hasAttended = Boolean(latestLog);
+
+                        return (
+                          <TableRow key={emp.id || emp.uid} className="hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-0">
+                            <TableCell className="py-3">
+                              <p className="font-bold text-slate-800 text-xs">{emp.displayName || emp.name || 'Pegawai'}</p>
+                              <p className="text-[10px] text-slate-400 font-mono">{emp.email || '-'}</p>
+                            </TableCell>
+                            <TableCell className="py-3 font-mono text-xs text-slate-600 font-semibold">
+                              {emp.nip || '-'}
+                            </TableCell>
+                            <TableCell className="py-3">
+                              <Badge variant="outline" className="text-[9px] font-bold uppercase bg-slate-50 text-slate-700 border-slate-200">
+                                {emp.bidang || 'Staff'}
+                              </Badge>
+                            </TableCell>
+                            <TableCell className="py-3">
+                              {hasAttended ? (
+                                <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white text-[9px] font-black uppercase tracking-wider gap-1">
+                                  <Check size={10} /> Sudah Absen ({empEventLogs.length}x)
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-amber-700 bg-amber-50 border-amber-200 text-[9px] font-black uppercase tracking-wider">
+                                  Belum Absen
+                                </Badge>
+                              )}
+                            </TableCell>
+                            <TableCell className="py-3 font-mono text-xs text-slate-600">
+                              {latestLog ? (
+                                <div>
+                                  <span className="font-bold text-slate-800">
+                                    {format(latestLog.timestamp?.toDate ? latestLog.timestamp.toDate() : new Date(latestLog.timestamp), 'HH:mm:ss')}
+                                  </span>
+                                  <span className="text-[10px] text-slate-400 ml-1">({latestLog.date})</span>
+                                </div>
+                              ) : (
+                                <span className="text-slate-300 italic">-</span>
+                              )}
+                            </TableCell>
+                            <TableCell className="text-right py-3">
+                              {latestLog?.selfieUrl ? (
+                                <div 
+                                  onClick={() => setSelectedPhoto(latestLog.selfieUrl)}
+                                  className="inline-block h-8 w-8 rounded-md overflow-hidden border border-slate-200 shadow-xs cursor-pointer hover:ring-2 ring-red-500 transition-all"
+                                >
+                                  <img src={latestLog.selfieUrl} alt="Selfie" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                                </div>
+                              ) : (
+                                <span className="text-slate-300 text-xs italic">-</span>
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      });
+                    })()}
+                  </TableBody>
+                </Table>
+              </div>
+            </Card>
+          )}
         </TabsContent>
 
         <TabsContent value="laporan" className="space-y-6 mt-6">
@@ -1929,20 +2645,26 @@ export default function Admin() {
                                                )}
                                             </>
                                          ) : (
-                                            <>
-                                               <Badge variant={item.log.isLate ? 'destructive' : 'default'} className="text-[9px] font-black uppercase tracking-tighter shadow-none">
-                                                  {item.log.isLate ? 'TERLAMBAT' : 'TEPAT WAKTU'}
-                                               </Badge>
-                                               {item.log.isLate && (
-                                                  <div className="text-[9px] font-black text-rose-500 mt-1 uppercase tracking-tighter">
-                                                    Terlambat: {Math.floor((item.log.lateDuration || 0) / 60)} Menit
-                                                  </div>
-                                               )}
-                                               <div className="text-[10px] font-mono text-slate-500 mt-1">
-                                                  {format(item.log.timestamp?.toDate ? item.log.timestamp.toDate() : new Date(item.log.timestamp), 'HH:mm:ss')} | {item.log.checkOutTimestamp ? format(item.log.checkOutTimestamp?.toDate ? item.log.checkOutTimestamp.toDate() : new Date(item.log.checkOutTimestamp), 'HH:mm:ss') : '--:--:--'}
-                                               </div>
-                                            </>
-                                         )
+                                             <>
+                                                {item.log.isLate ? (
+                                                   <>
+                                                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-tighter bg-amber-500 text-white shadow-xs">
+                                                         TERLAMBAT
+                                                      </span>
+                                                      <div className="text-[9px] font-black text-amber-600 mt-1 uppercase tracking-tighter">
+                                                        Terlambat: {Math.floor((item.log.lateDuration || 0) / 60)} Menit
+                                                      </div>
+                                                   </>
+                                                ) : (
+                                                   <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[9px] font-black uppercase tracking-tighter bg-emerald-600 text-white shadow-xs">
+                                                      TEPAT WAKTU
+                                                   </span>
+                                                )}
+                                                <div className="text-[10px] font-mono text-slate-500 mt-1">
+                                                   {format(item.log.timestamp?.toDate ? item.log.timestamp.toDate() : new Date(item.log.timestamp), 'HH:mm:ss')} | {item.log.checkOutTimestamp ? format(item.log.checkOutTimestamp?.toDate ? item.log.checkOutTimestamp.toDate() : new Date(item.log.checkOutTimestamp), 'HH:mm:ss') : '--:--:--'}
+                                                </div>
+                                             </>
+                                          )
                                       ) : item.roster && item.roster.shiftName !== 'OFF' ? (
                                          <Badge variant="outline" className="text-[9px] font-black uppercase tracking-tighter border-rose-200 text-rose-500 bg-rose-50/50">
                                             <AlertTriangle size={10} className="mr-1"/> ALFA / TIDAK ABSEN
@@ -2558,47 +3280,70 @@ export default function Admin() {
               <div className="space-y-4">
                 <Label className="text-[11px] font-black uppercase text-red-600 tracking-wider">Jadwal Shift & Jendela Waktu</Label>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  {(settings.shifts || []).map((shift, idx) => (
-                    <Card key={idx} className="border border-slate-200 shadow-sm bg-slate-50/50 p-4 space-y-4">
-                      <div className="flex items-center justify-between">
-                        <Badge className="bg-red-600 text-white font-black text-[9px] uppercase tracking-widest">Shift {shift.name}</Badge>
-                        <span className="text-[9px] font-bold text-slate-400 uppercase italic">Toleransi Keterlambatan: 30m</span>
-                      </div>
-                      <div className="grid grid-cols-2 gap-3">
-                        <div className="space-y-1.5">
-                          <Label className="text-[9px] font-black uppercase text-slate-400">Waktu Mulai</Label>
-                          <Input 
-                            type="time" 
-                            value={shift.startTime} 
-                            className="h-8 text-[10px] font-mono bg-white border-slate-200"
-                            onChange={(e) => {
-                              const newShifts = [...(settings.shifts || [])];
-                              newShifts[idx].startTime = e.target.value;
-                              setSettings({...settings, shifts: newShifts});
-                            }}
-                          />
+                  {(settings.shifts || []).map((shift, idx) => {
+                    const tol = shift.toleranceMinutes ?? 30;
+                    const shiftBase = parse(shift.startTime || '07:00', 'HH:mm', new Date());
+                    const onTimeLimit = format(addMinutes(shiftBase, tol), 'HH:mm');
+                    const lateStart = format(addMinutes(shiftBase, tol + 1), 'HH:mm');
+
+                    return (
+                      <Card key={idx} className="border border-slate-200 shadow-sm bg-slate-50/50 p-4 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <Badge className="bg-red-600 text-white font-black text-[9px] uppercase tracking-widest">Shift {shift.name}</Badge>
+                          <span className="text-[9px] font-bold text-slate-400 uppercase italic">Toleransi: {tol} Menit</span>
                         </div>
-                        <div className="space-y-1.5">
-                          <Label className="text-[9px] font-black uppercase text-slate-400">Waktu Selesai</Label>
-                          <Input 
-                            type="time" 
-                            value={shift.endTime} 
-                            className="h-8 text-[10px] font-mono bg-white border-slate-200"
-                            onChange={(e) => {
-                              const newShifts = [...(settings.shifts || [])];
-                              newShifts[idx].endTime = e.target.value;
-                              setSettings({...settings, shifts: newShifts});
-                            }}
-                          />
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="space-y-1.5">
+                            <Label className="text-[9px] font-black uppercase text-slate-400">Waktu Mulai</Label>
+                            <Input 
+                              type="time" 
+                              value={shift.startTime} 
+                              className="h-8 text-[10px] font-mono bg-white border-slate-200 px-2"
+                              onChange={(e) => {
+                                const newShifts = [...(settings.shifts || [])];
+                                newShifts[idx].startTime = e.target.value;
+                                setSettings({...settings, shifts: newShifts});
+                              }}
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-[9px] font-black uppercase text-slate-400">Waktu Selesai</Label>
+                            <Input 
+                              type="time" 
+                              value={shift.endTime} 
+                              className="h-8 text-[10px] font-mono bg-white border-slate-200 px-2"
+                              onChange={(e) => {
+                                const newShifts = [...(settings.shifts || [])];
+                                newShifts[idx].endTime = e.target.value;
+                                setSettings({...settings, shifts: newShifts});
+                              }}
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-[9px] font-black uppercase text-slate-400">Toleransi (Mnt)</Label>
+                            <Input 
+                              type="number" 
+                              min={0}
+                              max={180}
+                              value={shift.toleranceMinutes ?? 30} 
+                              className="h-8 text-[10px] font-mono bg-white border-slate-200 px-2"
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                const newShifts = [...(settings.shifts || [])];
+                                newShifts[idx].toleranceMinutes = isNaN(val) ? 0 : val;
+                                setSettings({...settings, shifts: newShifts});
+                              }}
+                            />
+                          </div>
                         </div>
-                      </div>
-                      <div className="pt-1 border-t border-slate-200">
-                         <p className="text-[8px] font-bold text-slate-400 uppercase leading-tight italic">
-                           * Absen diizinkan mulai {shift.startTime} WIB. Terlambat setelah {format(addMinutes(parse(shift.startTime, 'HH:mm', new Date()), 30), 'HH:mm')} WIB.
-                         </p>
-                      </div>
-                    </Card>
-                  ))}
+                        <div className="pt-1 border-t border-slate-200">
+                           <p className="text-[8px] font-bold text-slate-400 uppercase leading-tight italic">
+                             * Absen mulai {shift.startTime} WIB. Tepat waktu s/d {onTimeLimit} WIB (Terlambat mulai {lateStart} WIB).
+                           </p>
+                        </div>
+                      </Card>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -2731,229 +3476,7 @@ export default function Admin() {
                 </div>
               </div>
 
-              <div className="w-full h-px bg-slate-100" />
 
-              {/* === MODE ACARA KHUSUS === */}
-              <div className="space-y-4">
-                <CardHeader className="p-0">
-                  <CardTitle className="text-[10px] font-black text-slate-500 uppercase tracking-widest flex gap-2 items-center">
-                    <Star size={14} className="text-amber-500" /> Mode Acara Khusus
-                  </CardTitle>
-                  <CardDescription className="text-xs font-medium text-slate-400 mt-1">
-                    Aktifkan mode khusus untuk acara/event. Saat aktif, absensi reguler dan shift akan digantikan oleh aturan lokasi & waktu acara ini.
-                  </CardDescription>
-                </CardHeader>
-
-                <div className="p-4 bg-amber-50/60 border border-amber-200 rounded-xl space-y-5">
-                  {/* Toggle aktif */}
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-[10px] font-black uppercase text-amber-800 tracking-wider">Aktifkan Mode Acara</p>
-                      <p className="text-[9px] text-amber-600 font-medium mt-0.5">Jika aktif, sistem akan bypass jadwal reguler dan menggunakan lokasi & waktu acara di bawah.</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const current = (settings as any).event?.isActive || false;
-                        setSettings({
-                          ...settings,
-                          event: {
-                            ...((settings as any).event || {}),
-                            isActive: !current,
-                          }
-                        } as any);
-                      }}
-                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${
-                        (settings as any).event?.isActive ? 'bg-amber-500' : 'bg-slate-200'
-                      }`}
-                    >
-                      <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow-md transition-transform ${
-                        (settings as any).event?.isActive ? 'translate-x-6' : 'translate-x-1'
-                      }`} />
-                    </button>
-                  </div>
-
-                  {/* Status badge */}
-                  {(settings as any).event?.isActive && (
-                    <div className="flex items-center gap-2 px-3 py-2 bg-amber-500/20 rounded-lg border border-amber-300">
-                      <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse" />
-                      <p className="text-[10px] font-black text-amber-800 uppercase tracking-widest">Mode Acara Sedang Aktif — Absensi Reguler Dinonaktifkan</p>
-                    </div>
-                  )}
-
-                  {/* Form detail acara */}
-                  <div className="space-y-4">
-                    {/* Nama acara */}
-                    <div className="space-y-1.5">
-                      <Label className="text-[9px] font-black uppercase text-amber-700">Nama Acara</Label>
-                      <input
-                        type="text"
-                        value={(settings as any).event?.name || ''}
-                        onChange={(e) => setSettings({
-                          ...settings,
-                          event: { ...((settings as any).event || {}), name: e.target.value }
-                        } as any)}
-                        placeholder="Contoh: Rapat Koordinasi PMI 2026"
-                        className="w-full h-9 px-3 rounded-md border border-amber-200 bg-white text-sm font-medium focus:outline-none focus:ring-2 focus:ring-amber-400"
-                      />
-                    </div>
-
-                    {/* Tanggal acara */}
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1.5">
-                        <Label className="text-[9px] font-black uppercase text-amber-700">Tanggal Mulai</Label>
-                        <Input
-                          type="date"
-                          value={(settings as any).event?.startDate || ''}
-                          onChange={(e) => setSettings({
-                            ...settings,
-                            event: { ...((settings as any).event || {}), startDate: e.target.value }
-                          } as any)}
-                          className="h-9 text-sm bg-white border-amber-200 focus-visible:ring-amber-400"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-[9px] font-black uppercase text-amber-700">Tanggal Selesai</Label>
-                        <Input
-                          type="date"
-                          value={(settings as any).event?.endDate || ''}
-                          onChange={(e) => setSettings({
-                            ...settings,
-                            event: { ...((settings as any).event || {}), endDate: e.target.value }
-                          } as any)}
-                          className="h-9 text-sm bg-white border-amber-200 focus-visible:ring-amber-400"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Waktu absen acara */}
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="space-y-1.5">
-                        <Label className="text-[9px] font-black uppercase text-amber-700">Jam Buka Absen</Label>
-                        <Input
-                          type="time"
-                          value={(settings as any).event?.startTime || '08:00'}
-                          onChange={(e) => setSettings({
-                            ...settings,
-                            event: { ...((settings as any).event || {}), startTime: e.target.value }
-                          } as any)}
-                          className="h-9 text-sm font-mono bg-white border-amber-200 focus-visible:ring-amber-400"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <Label className="text-[9px] font-black uppercase text-amber-700">Jam Tutup Absen</Label>
-                        <Input
-                          type="time"
-                          value={(settings as any).event?.endTime || '17:00'}
-                          onChange={(e) => setSettings({
-                            ...settings,
-                            event: { ...((settings as any).event || {}), endTime: e.target.value }
-                          } as any)}
-                          className="h-9 text-sm font-mono bg-white border-amber-200 focus-visible:ring-amber-400"
-                        />
-                      </div>
-                    </div>
-
-                    {/* Lokasi GPS acara */}
-                    <div className="space-y-2">
-                      <Label className="text-[9px] font-black uppercase text-amber-700 flex items-center gap-1.5">
-                        <MapPin size={11} /> Koordinat Lokasi Acara (GPS)
-                      </Label>
-                      <div className="grid grid-cols-3 gap-3">
-                        <div className="space-y-1">
-                          <Label className="text-[8px] font-bold text-amber-600 uppercase">Latitude</Label>
-                          <div className="relative flex items-center">
-                            <Input
-                              type="text"
-                              value={(settings as any).event?.lat || ''}
-                              onChange={(e) => setSettings({
-                                ...settings,
-                                event: { ...((settings as any).event || {}), lat: parseFloat(e.target.value) || 0 }
-                              } as any)}
-                              placeholder="-6.0000"
-                              className="h-8 pr-7 text-xs font-mono bg-white border-amber-200 focus-visible:ring-amber-400"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => copyToClipboard((settings as any).event?.lat, 'Latitude')}
-                              title="Salin Latitude"
-                              className="absolute right-1.5 h-6 w-6 p-1 rounded-md hover:bg-amber-100 text-amber-500 hover:text-amber-700 transition-colors flex items-center justify-center"
-                            >
-                              <Copy size={11} />
-                            </button>
-                          </div>
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-[8px] font-bold text-amber-600 uppercase">Longitude</Label>
-                          <div className="relative flex items-center">
-                            <Input
-                              type="text"
-                              value={(settings as any).event?.lng || ''}
-                              onChange={(e) => setSettings({
-                                ...settings,
-                                event: { ...((settings as any).event || {}), lng: parseFloat(e.target.value) || 0 }
-                              } as any)}
-                              placeholder="106.0000"
-                              className="h-8 pr-7 text-xs font-mono bg-white border-amber-200 focus-visible:ring-amber-400"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => copyToClipboard((settings as any).event?.lng, 'Longitude')}
-                              title="Salin Longitude"
-                              className="absolute right-1.5 h-6 w-6 p-1 rounded-md hover:bg-amber-100 text-amber-500 hover:text-amber-700 transition-colors flex items-center justify-center"
-                            >
-                              <Copy size={11} />
-                            </button>
-                          </div>
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-[8px] font-bold text-amber-600 uppercase">Radius (m)</Label>
-                          <Input
-                            type="number"
-                            value={(settings as any).event?.radius || 100}
-                            onChange={(e) => setSettings({
-                              ...settings,
-                              event: { ...((settings as any).event || {}), radius: parseInt(e.target.value) || 100 }
-                            } as any)}
-                            className="h-8 text-xs font-mono bg-white border-amber-200"
-                          />
-                        </div>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        className="h-8 text-[9px] font-black uppercase tracking-widest border-amber-200 text-amber-700 hover:bg-amber-50"
-                        onClick={() => {
-                          if (navigator.geolocation) {
-                            navigator.geolocation.getCurrentPosition((pos) => {
-                              setSettings({
-                                ...settings,
-                                event: {
-                                  ...((settings as any).event || {}),
-                                  lat: parseFloat(pos.coords.latitude.toFixed(6)),
-                                  lng: parseFloat(pos.coords.longitude.toFixed(6)),
-                                }
-                              } as any);
-                              toast.success('Koordinat lokasi acara diset ke posisi Anda saat ini!');
-                            }, () => {
-                              toast.error('Gagal mendapatkan GPS. Pastikan izin lokasi aktif.');
-                            }, { enableHighAccuracy: true });
-                          }
-                        }}
-                      >
-                        <Navigation size={11} className="mr-1" /> Gunakan Lokasi Saya Saat Ini
-                      </Button>
-                    </div>
-
-                    <p className="text-[8px] text-amber-600 font-bold italic bg-amber-50 p-2 rounded-lg border border-amber-100">
-                      * Mode Acara aktif akan memperbolehkan absensi di luar jadwal reguler dan hari libur, selama berada di dalam radius lokasi acara dan dalam jendela waktu yang ditentukan.
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="w-full h-px bg-slate-100" />
 
               <div className="space-y-4">
                 <CardHeader className="p-0">
