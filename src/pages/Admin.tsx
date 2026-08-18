@@ -118,6 +118,7 @@ export default function Admin() {
   const [isImportingRoster, setIsImportingRoster] = useState(false);
   const [rosterImportProgress, setRosterImportProgress] = useState(0);
   const [rosterImportTotal, setRosterImportTotal] = useState(0);
+  const [isClearingData, setIsClearingData] = useState(false);
   const [isImportingHistory, setIsImportingHistory] = useState(false);
   const [historyImportProgress, setHistoryImportProgress] = useState(0);
   const [historyImportTotal, setHistoryImportTotal] = useState(0);
@@ -1281,6 +1282,38 @@ export default function Admin() {
       }
     };
     reader.readAsBinaryString(file);
+  };
+
+  const clearMonthData = async () => {
+    if (!historyImportMonth) {
+      toast.error("Pilih bulan terlebih dahulu");
+      return;
+    }
+    if (!confirm(`Yakin ingin MENGHAPUS SEMUA data absen dan jadwal untuk bulan ${historyImportMonth}?`)) return;
+
+    setIsClearingData(true);
+    const toastId = toast.loading(`Menghapus data bulan ${historyImportMonth}...`);
+    try {
+      // Delete attendance
+      const attQuery = query(collection(db, 'attendance'), where('month', '==', historyImportMonth));
+      const attSnap = await getDocs(attQuery);
+      const attPromises = attSnap.docs.map(d => deleteDoc(doc(db, 'attendance', d.id)));
+
+      // Delete rosters
+      const rosterQuery = query(collection(db, 'rosters'), where('month', '==', historyImportMonth));
+      const rosterSnap = await getDocs(rosterQuery);
+      const rosterPromises = rosterSnap.docs.map(d => deleteDoc(doc(db, 'rosters', d.id)));
+
+      await Promise.all([...attPromises, ...rosterPromises]);
+
+      toast.success(`Berhasil menghapus ${attSnap.size} absen dan ${rosterSnap.size} jadwal.`, { id: toastId });
+      fetchLogs(reportMonth);
+    } catch (err) {
+      console.error(err);
+      toast.error("Gagal menghapus data", { id: toastId });
+    } finally {
+      setIsClearingData(false);
+    }
   };
 
   const exportToExcel = () => {
@@ -2852,12 +2885,21 @@ export default function Admin() {
                 </Button>
                 <Button
                   onClick={() => historyFileRef.current?.click()}
-                  disabled={isImportingHistory}
+                  disabled={isImportingHistory || isClearingData}
                   size="sm"
                   variant="outline"
                   className="h-9 border-slate-200 shadow-sm text-[10px] font-black uppercase text-blue-600 hover:text-white hover:bg-blue-600"
                 >
                   <Upload size={14} className="mr-1" /> {isImportingHistory ? 'Mengimpor...' : 'Impor Data'}
+                </Button>
+                <Button
+                  onClick={clearMonthData}
+                  disabled={isImportingHistory || isClearingData}
+                  size="sm"
+                  variant="outline"
+                  className="h-9 border-slate-200 shadow-sm text-[10px] font-black uppercase text-red-600 hover:text-white hover:bg-red-600"
+                >
+                  <Trash2 size={14} className={`mr-1 ${isClearingData ? 'animate-spin' : ''}`} /> {isClearingData ? 'Menghapus...' : 'Bersihkan Data'}
                 </Button>
                 <input type="file" ref={historyFileRef} className="hidden" accept=".xlsx, .xls" onChange={importHistoryExcel} />
               </div>
