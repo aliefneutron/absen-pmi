@@ -1888,13 +1888,22 @@ export default function Admin() {
     }
 
     let empWorkingDays = baseWorkingDays;
-    const empRosters = rosters.filter(r => r.userEmail?.toLowerCase() === email && r.date.startsWith(reportMonth));
+    const bidang = (emp.bidang || '').toUpperCase();
 
-    if (empRosters.length > 0) {
-      empWorkingDays = empRosters.filter(r => {
-        const rDate = new Date(r.date);
-        return rDate <= end && r.shiftName !== 'OFF' && r.shiftName !== 'Libur';
-      }).length;
+    // Teknisi dan Keamanan menggunakan jadwal piket (roster)
+    if (bidang.includes('TEKNISI') || bidang.includes('KEAMANAN')) {
+      const empRosters = rosters.filter(r => r.userEmail?.toLowerCase() === email && r.date.startsWith(reportMonth));
+      if (empRosters.length > 0) {
+        empWorkingDays = empRosters.filter(r => {
+          const rDate = new Date(r.date);
+          return rDate <= end && r.shiftName !== 'OFF' && r.shiftName !== 'Libur';
+        }).length;
+      } else {
+        empWorkingDays = 0; // Jika tidak ada jadwal sama sekali
+      }
+    } else {
+      // Administrasi, Kebersihan, dll menggunakan baseWorkingDays (hari normal dikurangi libur)
+      empWorkingDays = baseWorkingDays;
     }
 
     const alfa = Math.max(0, empWorkingDays - totalHadir - totalLeave);
