@@ -1160,6 +1160,8 @@ export default function Admin() {
             continue;
           }
 
+          let alfaCount = 0;
+
           for (let day = 1; day <= 31; day++) {
             const code = row[dataOffset - 1 + day]?.toString().toUpperCase();
             if (!code) continue;
@@ -1195,7 +1197,14 @@ export default function Admin() {
                 let status = 'normal';
                 if (rand > 0.85 && rand <= 0.92) status = 'late';
                 else if (rand > 0.92 && rand <= 0.97) status = 'leave';
-                else if (rand > 0.97) status = 'alfa';
+                else if (rand > 0.97) {
+                  if (alfaCount < 2) {
+                    status = 'alfa';
+                    alfaCount++;
+                  } else {
+                    status = 'normal';
+                  }
+                }
 
                 if (status === 'alfa') {
                   // Skip creating attendance log, roster is already created
