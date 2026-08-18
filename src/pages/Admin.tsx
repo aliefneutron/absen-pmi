@@ -118,7 +118,6 @@ export default function Admin() {
   const [isImportingRoster, setIsImportingRoster] = useState(false);
   const [rosterImportProgress, setRosterImportProgress] = useState(0);
   const [rosterImportTotal, setRosterImportTotal] = useState(0);
-  const [isGeneratingDummy, setIsGeneratingDummy] = useState(false);
   const [isImportingHistory, setIsImportingHistory] = useState(false);
   const [historyImportProgress, setHistoryImportProgress] = useState(0);
   const [historyImportTotal, setHistoryImportTotal] = useState(0);
@@ -1191,12 +1190,48 @@ export default function Admin() {
             if (['Pagi', 'Sore', 'Malam'].includes(shiftName)) {
               const shiftObj = settings?.shifts?.find((s: any) => s.name === shiftName);
               if (shiftObj) {
+                const rand = Math.random();
+                let status = 'normal';
+                if (rand > 0.85 && rand <= 0.92) status = 'late';
+                else if (rand > 0.92 && rand <= 0.97) status = 'leave';
+                else if (rand > 0.97) status = 'alfa';
+
+                if (status === 'alfa') {
+                  // Skip creating attendance log, roster is already created
+                  continue;
+                }
+
                 const recordId = `${emp.uid || emp.id}_${dateStr}_${shiftName}`;
 
-                const timestamp = new Date(`${dateStr}T${shiftObj.startTime}:00`);
-                const checkOutTimestamp = new Date(`${dateStr}T${shiftObj.endTime}:00`);
+                let timestamp = new Date(`${dateStr}T${shiftObj.startTime}:00`);
+                let checkOutTimestamp = new Date(`${dateStr}T${shiftObj.endTime}:00`);
                 if (shiftObj.startTime > shiftObj.endTime) {
                   checkOutTimestamp.setDate(checkOutTimestamp.getDate() + 1);
+                }
+
+                let isLate = false;
+                let isLeave = false;
+                let leaveType = '';
+                let lateDuration = 0;
+
+                if (status === 'leave') {
+                  isLeave = true;
+                  leaveType = Math.random() > 0.5 ? 'I' : 'S';
+                  // For leave, timestamp is just the start of the shift
+                } else if (status === 'late') {
+                  isLate = true;
+                  // Late by 5 to 60 minutes
+                  const lateMins = Math.floor(Math.random() * 55) + 5;
+                  timestamp.setMinutes(timestamp.getMinutes() + lateMins);
+                  lateDuration = lateMins;
+
+                  // Checkout is normal, maybe a bit late
+                  checkOutTimestamp.setMinutes(checkOutTimestamp.getMinutes() + Math.floor(Math.random() * 30));
+                } else {
+                  // Normal: arrive 0 to 30 mins early
+                  timestamp.setMinutes(timestamp.getMinutes() - Math.floor(Math.random() * 30));
+                  // Checkout: leave 0 to 30 mins late
+                  checkOutTimestamp.setMinutes(checkOutTimestamp.getMinutes() + Math.floor(Math.random() * 30));
                 }
 
                 const record: any = {
@@ -1209,15 +1244,21 @@ export default function Admin() {
                   shiftName: shiftName,
                   location: { latitude: settings?.officeLat || -6.1751, longitude: settings?.officeLng || 106.8272 },
                   isWithinRange: true,
-                  isLate: false,
-                  lateDuration: 0,
-                  lateThreshold: '00:00:00',
+                  isLate: isLate,
+                  lateDuration: lateDuration,
+                  lateThreshold: shiftObj.startTime + ':00',
                   selfieUrl: null,
-                  isLeave: false,
-                  checkOutTimestamp: checkOutTimestamp,
-                  checkOutLocation: { latitude: settings?.officeLat || -6.1751, longitude: settings?.officeLng || 106.8272 },
-                  isLateCheckOut: false
+                  isLeave: isLeave,
                 };
+
+                if (isLeave) {
+                  record.leaveType = leaveType;
+                  record.leaveReason = 'Generated Dummy Data';
+                } else {
+                  record.checkOutTimestamp = checkOutTimestamp;
+                  record.checkOutLocation = { latitude: settings?.officeLat || -6.1751, longitude: settings?.officeLng || 106.8272 };
+                  record.isLateCheckOut = false;
+                }
 
                 await setDoc(doc(db, 'attendance', recordId), record);
                 successCount++;
@@ -1240,131 +1281,6 @@ export default function Admin() {
       }
     };
     reader.readAsBinaryString(file);
-  };
-
-  const generateDummyData = async () => {
-    if (!confirm("Generate dummy data (Alfa, Telat, Izin) untuk April - 17 Agustus?")) return;
-    setIsGeneratingDummy(true);
-    const toastId = toast.loading("Membuat data dummy...");
-    try {
-      const months = ['2026-04', '2026-05', '2026-06', '2026-07', '2026-08'];
-      let count = 0;
-
-      for (const emp of employees) {
-        if (emp.email === 'aliefneutron@gmail.com' || emp.email === 'aliefcorp.app@gmail.com') continue;
-
-        for (const month of months) {
-          const daysInMonth = month === '2026-04' ? 30 : month === '2026-05' ? 31 : month === '2026-06' ? 30 : month === '2026-07' ? 31 : 31;
-          const maxDay = month === '2026-08' ? 17 : daysInMonth;
-
-          for (let day = 1; day <= maxDay; day++) {
-            const dateStr = `${month}-${day.toString().padStart(2, '0')}`;
-            const dateObj = new Date(dateStr);
-            const isWeekend = dateObj.getDay() === 0 || dateObj.getDay() === 6;
-
-            if (isWeekend) continue;
-
-            const rand = Math.random();
-            let status = 'normal';
-            if (rand > 0.85 && rand <= 0.92) status = 'late';
-            else if (rand > 0.92 && rand <= 0.97) status = 'leave';
-            else if (rand > 0.97) status = 'alfa';
-
-            if (status === 'alfa') {
-              // Generate roster for alfa so they are counted as absent
-              const rosterId = `${emp.uid || emp.id}_${dateStr}`;
-              const rosterRecord = {
-                userId: emp.uid || emp.id,
-                userName: emp.displayName || emp.name || 'Unknown',
-                userEmail: emp.email,
-                date: dateStr,
-                month: month,
-                shiftName: 'Pagi',
-                updatedAt: serverTimestamp()
-              };
-              await setDoc(doc(db, 'rosters', rosterId), rosterRecord);
-              continue;
-            }
-
-            const recordId = `${emp.uid || emp.id}_${dateStr}_Pagi`;
-
-            let timestamp;
-            let checkOutTimestamp;
-            let isLate = false;
-            let isLeave = false;
-            let leaveType = '';
-
-            if (status === 'leave') {
-              isLeave = true;
-              leaveType = Math.random() > 0.5 ? 'I' : 'S';
-              timestamp = new Date(`${dateStr}T07:00:00`);
-            } else {
-              if (status === 'late') {
-                isLate = true;
-                const hour = 8;
-                const minute = Math.floor(Math.random() * 55) + 5;
-                timestamp = new Date(`${dateStr}T${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:00`);
-              } else {
-                const hour = Math.random() > 0.5 ? 6 : 7;
-                const minute = hour === 6 ? Math.floor(Math.random() * 30) + 30 : Math.floor(Math.random() * 30);
-                timestamp = new Date(`${dateStr}T${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:00`);
-              }
-              const outHour = Math.floor(Math.random() * 2) + 14;
-              const outMinute = Math.floor(Math.random() * 60);
-              checkOutTimestamp = new Date(`${dateStr}T${outHour.toString().padStart(2, '0')}:${outMinute.toString().padStart(2, '0')}:00`);
-            }
-
-            const record: any = {
-              userId: emp.uid || emp.id,
-              userName: emp.displayName || emp.name || 'Unknown',
-              userEmail: emp.email,
-              timestamp: timestamp,
-              date: dateStr,
-              month: month,
-              shiftName: 'Pagi',
-              location: { latitude: settings?.officeLat || -6.1751, longitude: settings?.officeLng || 106.8272 },
-              isWithinRange: true,
-              isLate: isLate,
-              lateDuration: isLate ? Math.floor(Math.random() * 60) : 0,
-              lateThreshold: '08:00:00',
-              selfieUrl: null,
-              isLeave: isLeave,
-            };
-
-            if (isLeave) {
-              record.leaveType = leaveType;
-              record.leaveReason = 'Generated Dummy Data';
-            } else {
-              record.checkOutTimestamp = checkOutTimestamp;
-              record.checkOutLocation = { latitude: settings?.officeLat || -6.1751, longitude: settings?.officeLng || 106.8272 };
-              record.isLateCheckOut = false;
-            }
-
-            // Also generate roster for the attendance
-            const rosterId = `${emp.uid || emp.id}_${dateStr}`;
-            const rosterRecord = {
-              userId: emp.uid || emp.id,
-              userName: emp.displayName || emp.name || 'Unknown',
-              userEmail: emp.email,
-              date: dateStr,
-              month: month,
-              shiftName: 'Pagi',
-              updatedAt: serverTimestamp()
-            };
-            await setDoc(doc(db, 'rosters', rosterId), rosterRecord);
-            await setDoc(doc(db, 'attendance', recordId), record);
-            count++;
-          }
-        }
-      }
-      toast.success(`Berhasil generate ${count} data absen dummy.`, { id: toastId });
-      fetchLogs(reportMonth);
-    } catch (err) {
-      console.error(err);
-      toast.error('Gagal generate data.', { id: toastId });
-    } finally {
-      setIsGeneratingDummy(false);
-    }
   };
 
   const exportToExcel = () => {
@@ -2942,15 +2858,6 @@ export default function Admin() {
                   className="h-9 border-slate-200 shadow-sm text-[10px] font-black uppercase text-blue-600 hover:text-white hover:bg-blue-600"
                 >
                   <Upload size={14} className="mr-1" /> {isImportingHistory ? 'Mengimpor...' : 'Impor Data'}
-                </Button>
-                <Button
-                  onClick={generateDummyData}
-                  disabled={isGeneratingDummy}
-                  size="sm"
-                  variant="outline"
-                  className="h-9 border-slate-200 shadow-sm text-[10px] font-black uppercase text-amber-600 hover:text-white hover:bg-amber-600"
-                >
-                  <RefreshCw size={14} className={`mr-1 ${isGeneratingDummy ? 'animate-spin' : ''}`} /> {isGeneratingDummy ? 'Generating...' : 'Generate Dummy'}
                 </Button>
                 <input type="file" ref={historyFileRef} className="hidden" accept=".xlsx, .xls" onChange={importHistoryExcel} />
               </div>
