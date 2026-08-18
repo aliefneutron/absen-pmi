@@ -1326,11 +1326,11 @@ export default function Admin() {
     const toastId = toast.loading(`Menghapus data bulan ${historyImportMonth}...`);
     try {
       // Delete attendance
-      const attQuery = query(collection(db, 'attendance'), where('month', '==', historyImportMonth));
+      const attQuery = query(collection(db, 'attendance'), where('date', '>=', `${historyImportMonth}-01`), where('date', '<=', `${historyImportMonth}-31`));
       const attSnap = await getDocs(attQuery);
 
       // Delete rosters
-      const rosterQuery = query(collection(db, 'rosters'), where('month', '==', historyImportMonth));
+      const rosterQuery = query(collection(db, 'rosters'), where('date', '>=', `${historyImportMonth}-01`), where('date', '<=', `${historyImportMonth}-31`));
       const rosterSnap = await getDocs(rosterQuery);
 
       const allDocs = [...attSnap.docs.map(d => d.ref), ...rosterSnap.docs.map(d => d.ref)];
@@ -1751,14 +1751,15 @@ export default function Admin() {
   const handleClearMonthLogs = async () => {
     setIsClearingMonthLogs(true);
     try {
-      const q = query(collection(db, 'attendance'), where('month', '==', reportMonth));
-      const snap = await getDocs(q);
-      const docs = snap.docs;
+      // Delete attendance
+      const attQuery = query(collection(db, 'attendance'), where('date', '>=', `${reportMonth}-01`), where('date', '<=', `${reportMonth}-31`));
+      const attSnap = await getDocs(attQuery);
+      const docs = attSnap.docs;
 
-      // Also delete rosters for that month
-      const qRoster = query(collection(db, 'rosters'), where('month', '==', reportMonth));
-      const snapRoster = await getDocs(qRoster);
-      const docsRoster = snapRoster.docs;
+      // Delete rosters
+      const rosterQuery = query(collection(db, 'rosters'), where('date', '>=', `${reportMonth}-01`), where('date', '<=', `${reportMonth}-31`));
+      const rosterSnap = await getDocs(rosterQuery);
+      const docsRoster = rosterSnap.docs;
 
       // Delete in chunks of 100 to avoid client-side choking
       for (let i = 0; i < docs.length; i += 100) {
