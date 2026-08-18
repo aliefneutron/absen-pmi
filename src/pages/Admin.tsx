@@ -1876,19 +1876,29 @@ export default function Admin() {
     const endOfThisMonth = new Date(parseInt(year), parseInt(month), 0);
     const end = endOfThisMonth > today && start.getMonth() === today.getMonth() && start.getFullYear() === today.getFullYear() ? today : endOfThisMonth;
 
-    let workingDays = 0;
+    let baseWorkingDays = 0;
     for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
       const dateStr = format(d, 'yyyy-MM-dd');
       const dayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][d.getDay()];
       const isEnabledDay = ((settings as any).enabledDays || []).includes(dayName);
       const isHoliday = !!((settings as any).holidays && (settings as any).holidays[dateStr]);
       if (isEnabledDay && !isHoliday) {
-        workingDays++;
+        baseWorkingDays++;
       }
     }
 
-    const alfa = Math.max(0, workingDays - totalHadir - totalLeave);
-    return { ...emp, totalHadir, totalTelat, totalLateDuration, totalTepatWaktu, totalLeave, alfa, workingDays };
+    let empWorkingDays = baseWorkingDays;
+    const empRosters = rosters.filter(r => r.userEmail?.toLowerCase() === email && r.date.startsWith(reportMonth));
+
+    if (empRosters.length > 0) {
+      empWorkingDays = empRosters.filter(r => {
+        const rDate = new Date(r.date);
+        return rDate <= end && r.shiftName !== 'OFF' && r.shiftName !== 'Libur';
+      }).length;
+    }
+
+    const alfa = Math.max(0, empWorkingDays - totalHadir - totalLeave);
+    return { ...emp, totalHadir, totalTelat, totalLateDuration, totalTepatWaktu, totalLeave, alfa, workingDays: empWorkingDays };
   });
 
   return (
