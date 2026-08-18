@@ -1135,6 +1135,28 @@ export default function Admin() {
         const totalRowsToProcess = rows.length - 2;
         setHistoryImportTotal(totalRowsToProcess);
 
+        // Pre-select 1 to 3 random employees to get alfa this month
+        const numAlfaCandidates = Math.floor(Math.random() * 3) + 1; // 1, 2, or 3
+        const alfaCandidateIndices = new Set<number>();
+        const validRowIndices = [];
+        for (let i = 2; i < rows.length; i++) {
+          const identifier = rows[i][0]?.toString().trim();
+          if (identifier && !identifier.startsWith('---')) {
+            validRowIndices.push(i);
+          }
+        }
+
+        while (alfaCandidateIndices.size < numAlfaCandidates && validRowIndices.length > 0) {
+          const randIdx = Math.floor(Math.random() * validRowIndices.length);
+          alfaCandidateIndices.add(validRowIndices[randIdx]);
+          validRowIndices.splice(randIdx, 1);
+        }
+
+        const isJulyOrAugust = monthStr.endsWith('-07') || monthStr.endsWith('-08');
+        const maxAlfaPerPerson = isJulyOrAugust ? 1 : 2;
+        const lateProbability = isJulyOrAugust ? 0.05 : 0.15; // 5% vs 15%
+        const leaveProbability = 0.03; // 3%
+
         for (let i = 2; i < rows.length; i++) {
           // Update progress and yield to event loop every 5 rows to keep UI responsive
           if (i % 5 === 0) {
@@ -1160,6 +1182,7 @@ export default function Admin() {
             continue;
           }
 
+          const isAlfaCandidate = alfaCandidateIndices.has(i);
           let alfaCount = 0;
 
           for (let day = 1; day <= 31; day++) {
@@ -1195,15 +1218,14 @@ export default function Admin() {
               if (shiftObj) {
                 const rand = Math.random();
                 let status = 'normal';
-                if (rand > 0.85 && rand <= 0.92) status = 'late';
-                else if (rand > 0.92 && rand <= 0.97) status = 'leave';
-                else if (rand > 0.97) {
-                  if (alfaCount < 2) {
-                    status = 'alfa';
-                    alfaCount++;
-                  } else {
-                    status = 'normal';
-                  }
+
+                if (isAlfaCandidate && alfaCount < maxAlfaPerPerson && rand < 0.15) {
+                  status = 'alfa';
+                  alfaCount++;
+                } else if (rand < lateProbability) {
+                  status = 'late';
+                } else if (rand < lateProbability + leaveProbability) {
+                  status = 'leave';
                 }
 
                 if (status === 'alfa') {
