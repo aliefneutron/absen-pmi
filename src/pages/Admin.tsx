@@ -17,8 +17,10 @@ import { toast } from 'sonner';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import * as XLSX from 'xlsx';
 import { cn } from '../lib/utils';
+import { useAuth } from '../lib/auth-context';
 
 export default function Admin() {
+  const { isSuperAdmin } = useAuth();
   const [logs, setLogs] = useState<any[]>([]);
   const [employees, setEmployees] = useState<any[]>([]);
   const [departments, setDepartments] = useState<string[]>(['RAWAT INAP', 'UGD', 'KLASTER 1', 'KLASTER 2', 'KLASTER 3', 'KLASTER 4', 'LABORATORIUM', 'FARMASI']);
@@ -103,6 +105,8 @@ export default function Admin() {
   // Database flush state
   const [isClearLogsDialogOpen, setIsClearLogsDialogOpen] = useState(false);
   const [isClearingLogs, setIsClearingLogs] = useState(false);
+  const [isClearMonthLogsDialogOpen, setIsClearMonthLogsDialogOpen] = useState(false);
+  const [isClearingMonthLogs, setIsClearingMonthLogs] = useState(false);
   const [isAddingEmployee, setIsAddingEmployee] = useState(false);
   const [isDeduplicating, setIsDeduplicating] = useState(false);
   const [newDepartment, setNewDepartment] = useState('');
@@ -114,6 +118,7 @@ export default function Admin() {
   const [isImportingRoster, setIsImportingRoster] = useState(false);
   const [rosterImportProgress, setRosterImportProgress] = useState(0);
   const [rosterImportTotal, setRosterImportTotal] = useState(0);
+  const [isGeneratingDummy, setIsGeneratingDummy] = useState(false);
   const [isImportingHistory, setIsImportingHistory] = useState(false);
   const [historyImportProgress, setHistoryImportProgress] = useState(0);
   const [historyImportTotal, setHistoryImportTotal] = useState(0);
@@ -1237,6 +1242,131 @@ export default function Admin() {
     reader.readAsBinaryString(file);
   };
 
+  const generateDummyData = async () => {
+    if (!confirm("Generate dummy data (Alfa, Telat, Izin) untuk April - 17 Agustus?")) return;
+    setIsGeneratingDummy(true);
+    const toastId = toast.loading("Membuat data dummy...");
+    try {
+      const months = ['2026-04', '2026-05', '2026-06', '2026-07', '2026-08'];
+      let count = 0;
+
+      for (const emp of employees) {
+        if (emp.email === 'aliefneutron@gmail.com' || emp.email === 'aliefcorp.app@gmail.com') continue;
+
+        for (const month of months) {
+          const daysInMonth = month === '2026-04' ? 30 : month === '2026-05' ? 31 : month === '2026-06' ? 30 : month === '2026-07' ? 31 : 31;
+          const maxDay = month === '2026-08' ? 17 : daysInMonth;
+
+          for (let day = 1; day <= maxDay; day++) {
+            const dateStr = `${month}-${day.toString().padStart(2, '0')}`;
+            const dateObj = new Date(dateStr);
+            const isWeekend = dateObj.getDay() === 0 || dateObj.getDay() === 6;
+
+            if (isWeekend) continue;
+
+            const rand = Math.random();
+            let status = 'normal';
+            if (rand > 0.85 && rand <= 0.92) status = 'late';
+            else if (rand > 0.92 && rand <= 0.97) status = 'leave';
+            else if (rand > 0.97) status = 'alfa';
+
+            if (status === 'alfa') {
+              // Generate roster for alfa so they are counted as absent
+              const rosterId = `${emp.uid || emp.id}_${dateStr}`;
+              const rosterRecord = {
+                userId: emp.uid || emp.id,
+                userName: emp.displayName || emp.name || 'Unknown',
+                userEmail: emp.email,
+                date: dateStr,
+                month: month,
+                shiftName: 'Pagi',
+                updatedAt: serverTimestamp()
+              };
+              await setDoc(doc(db, 'rosters', rosterId), rosterRecord);
+              continue;
+            }
+
+            const recordId = `${emp.uid || emp.id}_${dateStr}_Pagi`;
+
+            let timestamp;
+            let checkOutTimestamp;
+            let isLate = false;
+            let isLeave = false;
+            let leaveType = '';
+
+            if (status === 'leave') {
+              isLeave = true;
+              leaveType = Math.random() > 0.5 ? 'I' : 'S';
+              timestamp = new Date(`${dateStr}T07:00:00`);
+            } else {
+              if (status === 'late') {
+                isLate = true;
+                const hour = 8;
+                const minute = Math.floor(Math.random() * 55) + 5;
+                timestamp = new Date(`${dateStr}T${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:00`);
+              } else {
+                const hour = Math.random() > 0.5 ? 6 : 7;
+                const minute = hour === 6 ? Math.floor(Math.random() * 30) + 30 : Math.floor(Math.random() * 30);
+                timestamp = new Date(`${dateStr}T${hour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}:00`);
+              }
+              const outHour = Math.floor(Math.random() * 2) + 14;
+              const outMinute = Math.floor(Math.random() * 60);
+              checkOutTimestamp = new Date(`${dateStr}T${outHour.toString().padStart(2, '0')}:${outMinute.toString().padStart(2, '0')}:00`);
+            }
+
+            const record: any = {
+              userId: emp.uid || emp.id,
+              userName: emp.displayName || emp.name || 'Unknown',
+              userEmail: emp.email,
+              timestamp: timestamp,
+              date: dateStr,
+              month: month,
+              shiftName: 'Pagi',
+              location: { latitude: settings?.officeLat || -6.1751, longitude: settings?.officeLng || 106.8272 },
+              isWithinRange: true,
+              isLate: isLate,
+              lateDuration: isLate ? Math.floor(Math.random() * 60) : 0,
+              lateThreshold: '08:00:00',
+              selfieUrl: null,
+              isLeave: isLeave,
+            };
+
+            if (isLeave) {
+              record.leaveType = leaveType;
+              record.leaveReason = 'Generated Dummy Data';
+            } else {
+              record.checkOutTimestamp = checkOutTimestamp;
+              record.checkOutLocation = { latitude: settings?.officeLat || -6.1751, longitude: settings?.officeLng || 106.8272 };
+              record.isLateCheckOut = false;
+            }
+
+            // Also generate roster for the attendance
+            const rosterId = `${emp.uid || emp.id}_${dateStr}`;
+            const rosterRecord = {
+              userId: emp.uid || emp.id,
+              userName: emp.displayName || emp.name || 'Unknown',
+              userEmail: emp.email,
+              date: dateStr,
+              month: month,
+              shiftName: 'Pagi',
+              updatedAt: serverTimestamp()
+            };
+            await setDoc(doc(db, 'rosters', rosterId), rosterRecord);
+            await setDoc(doc(db, 'attendance', recordId), record);
+            count++;
+          }
+        }
+      }
+      toast.success(`Berhasil generate ${count} data absen dummy.`, { id: toastId });
+      fetchLogs(reportMonth);
+    } catch (err) {
+      console.error(err);
+      toast.error('Gagal generate data.', { id: toastId });
+    } finally {
+      setIsGeneratingDummy(false);
+    }
+  };
+
   const exportToExcel = () => {
     try {
       if (logs.length === 0 && employees.length === 0) {
@@ -1628,6 +1758,41 @@ export default function Admin() {
       toast.error('Gagal mengosongkan database absen');
     } finally {
       setIsClearingLogs(false);
+    }
+  };
+
+  const handleClearMonthLogs = async () => {
+    setIsClearingMonthLogs(true);
+    try {
+      const q = query(collection(db, 'attendance'), where('month', '==', reportMonth));
+      const snap = await getDocs(q);
+      const docs = snap.docs;
+
+      // Also delete rosters for that month
+      const qRoster = query(collection(db, 'rosters'), where('month', '==', reportMonth));
+      const snapRoster = await getDocs(qRoster);
+      const docsRoster = snapRoster.docs;
+
+      // Delete in chunks of 100 to avoid client-side choking
+      for (let i = 0; i < docs.length; i += 100) {
+        const chunk = docs.slice(i, i + 100);
+        await Promise.all(chunk.map(d => deleteDoc(doc(db, 'attendance', d.id))));
+      }
+
+      for (let i = 0; i < docsRoster.length; i += 100) {
+        const chunk = docsRoster.slice(i, i + 100);
+        await Promise.all(chunk.map(d => deleteDoc(doc(db, 'rosters', d.id))));
+      }
+
+      toast.success(`Berhasil menghapus ${docs.length} riwayat absensi dan ${docsRoster.length} jadwal piket untuk bulan ${reportMonth}.`);
+      setIsClearMonthLogsDialogOpen(false);
+      fetchLogs(reportMonth);
+      fetchRosters(reportMonth);
+    } catch (err) {
+      console.error('Clear Month DB Error:', err);
+      toast.error('Gagal mengosongkan database absen bulan ini');
+    } finally {
+      setIsClearingMonthLogs(false);
     }
   };
 
@@ -2738,48 +2903,59 @@ export default function Admin() {
             </div>
           </div>
 
-          <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between p-4 bg-slate-50 rounded-lg border border-slate-200">
-            <div className="flex-1 w-full">
-              <h4 className="text-xs font-black text-slate-700 uppercase tracking-widest">Impor Riwayat Absen</h4>
-              <p className="text-[10px] text-slate-500 font-bold">Masukkan data absensi historis via Excel (format grid/jadwal).</p>
-              {isImportingHistory && historyImportTotal > 0 && (
-                <div className="mt-3 w-full max-w-md">
-                  <div className="flex justify-between text-[9px] font-bold text-slate-500 mb-1 uppercase">
-                    <span>Proses Impor...</span>
-                    <span>{Math.round((historyImportProgress / historyImportTotal) * 100)}% ({historyImportProgress}/{historyImportTotal})</span>
+          {isSuperAdmin && (
+            <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between p-4 bg-slate-50 rounded-lg border border-slate-200">
+              <div className="flex-1 w-full">
+                <h4 className="text-xs font-black text-slate-700 uppercase tracking-widest">Impor Riwayat Absen</h4>
+                <p className="text-[10px] text-slate-500 font-bold">Masukkan data absensi historis via Excel (format grid/jadwal).</p>
+                {isImportingHistory && historyImportTotal > 0 && (
+                  <div className="mt-3 w-full max-w-md">
+                    <div className="flex justify-between text-[9px] font-bold text-slate-500 mb-1 uppercase">
+                      <span>Proses Impor...</span>
+                      <span>{Math.round((historyImportProgress / historyImportTotal) * 100)}% ({historyImportProgress}/{historyImportTotal})</span>
+                    </div>
+                    <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                      <div
+                        className="bg-blue-600 h-2 rounded-full transition-all duration-300 ease-out"
+                        style={{ width: `${Math.round((historyImportProgress / historyImportTotal) * 100)}%` }}
+                      ></div>
+                    </div>
                   </div>
-                  <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
-                    <div
-                      className="bg-blue-600 h-2 rounded-full transition-all duration-300 ease-out"
-                      style={{ width: `${Math.round((historyImportProgress / historyImportTotal) * 100)}%` }}
-                    ></div>
-                  </div>
-                </div>
-              )}
+                )}
+              </div>
+              <div className="flex gap-2 items-center">
+                <Input
+                  type="month"
+                  value={historyImportMonth}
+                  onChange={(e) => setHistoryImportMonth(e.target.value)}
+                  className="h-9 font-mono text-xs w-40 bg-white"
+                  disabled={isImportingHistory}
+                />
+                <Button onClick={downloadHistoryTemplate} disabled={isImportingHistory} size="sm" variant="outline" className="h-9 border-slate-200 shadow-sm text-[10px] font-black uppercase text-slate-600">
+                  Unduh Template
+                </Button>
+                <Button
+                  onClick={() => historyFileRef.current?.click()}
+                  disabled={isImportingHistory}
+                  size="sm"
+                  variant="outline"
+                  className="h-9 border-slate-200 shadow-sm text-[10px] font-black uppercase text-blue-600 hover:text-white hover:bg-blue-600"
+                >
+                  <Upload size={14} className="mr-1" /> {isImportingHistory ? 'Mengimpor...' : 'Impor Data'}
+                </Button>
+                <Button
+                  onClick={generateDummyData}
+                  disabled={isGeneratingDummy}
+                  size="sm"
+                  variant="outline"
+                  className="h-9 border-slate-200 shadow-sm text-[10px] font-black uppercase text-amber-600 hover:text-white hover:bg-amber-600"
+                >
+                  <RefreshCw size={14} className={`mr-1 ${isGeneratingDummy ? 'animate-spin' : ''}`} /> {isGeneratingDummy ? 'Generating...' : 'Generate Dummy'}
+                </Button>
+                <input type="file" ref={historyFileRef} className="hidden" accept=".xlsx, .xls" onChange={importHistoryExcel} />
+              </div>
             </div>
-            <div className="flex gap-2 items-center">
-              <Input
-                type="month"
-                value={historyImportMonth}
-                onChange={(e) => setHistoryImportMonth(e.target.value)}
-                className="h-9 font-mono text-xs w-40 bg-white"
-                disabled={isImportingHistory}
-              />
-              <Button onClick={downloadHistoryTemplate} disabled={isImportingHistory} size="sm" variant="outline" className="h-9 border-slate-200 shadow-sm text-[10px] font-black uppercase text-slate-600">
-                Unduh Template
-              </Button>
-              <Button
-                onClick={() => historyFileRef.current?.click()}
-                disabled={isImportingHistory}
-                size="sm"
-                variant="outline"
-                className="h-9 border-slate-200 shadow-sm text-[10px] font-black uppercase text-blue-600 hover:text-white hover:bg-blue-600"
-              >
-                <Upload size={14} className="mr-1" /> {isImportingHistory ? 'Mengimpor...' : 'Impor Data'}
-              </Button>
-              <input type="file" ref={historyFileRef} className="hidden" accept=".xlsx, .xls" onChange={importHistoryExcel} />
-            </div>
-          </div>
+          )}
 
           <Card className="border border-slate-200 shadow-sm overflow-hidden bg-white">
             {reportType === 'harian' ? (
@@ -4013,14 +4189,24 @@ export default function Admin() {
 
             </CardContent>
             <CardFooter className="bg-slate-50 border-t p-4 flex justify-between items-center gap-4 flex-wrap">
-              <Button
-                type="button"
-                onClick={() => setIsClearLogsDialogOpen(true)}
-                variant="outline"
-                className="h-10 px-6 border-rose-200 text-rose-600 hover:bg-rose-50 font-black uppercase tracking-widest text-[10px] transition-all"
-              >
-                <Trash2 size={14} className="mr-2" /> Kosongkan Data Absensi
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  onClick={() => setIsClearMonthLogsDialogOpen(true)}
+                  variant="outline"
+                  className="h-10 px-6 border-amber-200 text-amber-600 hover:bg-amber-50 font-black uppercase tracking-widest text-[10px] transition-all"
+                >
+                  <Trash2 size={14} className="mr-2" /> Hapus Data Bulan Ini
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => setIsClearLogsDialogOpen(true)}
+                  variant="outline"
+                  className="h-10 px-6 border-rose-200 text-rose-600 hover:bg-rose-50 font-black uppercase tracking-widest text-[10px] transition-all"
+                >
+                  <Trash2 size={14} className="mr-2" /> Kosongkan Data Absensi
+                </Button>
+              </div>
               <Button
                 onClick={saveSettings}
                 disabled={savingSettings}
@@ -4465,6 +4651,47 @@ export default function Admin() {
               className="bg-rose-600 hover:bg-rose-700 text-white font-black uppercase tracking-widest text-[10px] h-10 shadow-lg shadow-rose-100"
             >
               {isClearingLogs ? 'MENGHAPUS...' : 'YA, KOSONGKAN ABSENSI'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Clear Month Database Confirmation Dialog */}
+      <Dialog open={isClearMonthLogsDialogOpen} onOpenChange={setIsClearMonthLogsDialogOpen}>
+        <DialogContent className="sm:max-w-[400px] bg-white border-none shadow-2xl p-0 overflow-hidden">
+          <DialogHeader className="bg-amber-50 p-6 border-b border-amber-100">
+            <DialogTitle className="text-xl font-black uppercase tracking-widest text-amber-800 flex items-center gap-2">
+              <AlertTriangle size={20} className="text-amber-600" /> PERINGATAN
+            </DialogTitle>
+            <DialogDescription className="text-xs font-medium text-amber-600 uppercase tracking-widest opacity-70">
+              Hapus Data Bulan Ini
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="p-6">
+            <p className="text-sm text-slate-600 font-medium">
+              Apakah Anda yakin ingin <span className="font-black text-amber-600">menghapus data absensi dan jadwal piket bulan {reportMonth}</span>?
+            </p>
+            <p className="text-[10px] text-slate-400 mt-2 italic font-bold uppercase tracking-tight">
+              * Info: Tindakan ini akan menghapus semua riwayat absen dan jadwal piket untuk bulan {reportMonth}.
+            </p>
+          </div>
+
+          <DialogFooter className="bg-slate-50 p-6 border-t gap-2 sm:gap-0">
+            <Button
+              variant="outline"
+              onClick={() => setIsClearMonthLogsDialogOpen(false)}
+              className="font-black uppercase tracking-widest text-[10px] h-10 border-slate-200"
+              disabled={isClearingMonthLogs}
+            >
+              Batal
+            </Button>
+            <Button
+              onClick={handleClearMonthLogs}
+              disabled={isClearingMonthLogs}
+              className="bg-amber-600 hover:bg-amber-700 text-white font-black uppercase tracking-widest text-[10px] h-10 shadow-lg shadow-amber-100"
+            >
+              {isClearingMonthLogs ? 'MENGHAPUS...' : 'YA, HAPUS DATA BULAN INI'}
             </Button>
           </DialogFooter>
         </DialogContent>

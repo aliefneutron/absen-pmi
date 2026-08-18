@@ -10,6 +10,7 @@ interface AuthContextType {
   profile: any | null;
   loading: boolean;
   isAdmin: boolean;
+  isSuperAdmin: boolean;
   isDeviceAuthorized: boolean;
   isProfileComplete: boolean;
   isApproved: boolean;
@@ -21,10 +22,11 @@ const AuthContext = createContext<AuthContextType>({
   profile: null,
   loading: true,
   isAdmin: false,
+  isSuperAdmin: false,
   isDeviceAuthorized: true,
   isProfileComplete: true,
   isApproved: true,
-  refreshProfile: async () => {},
+  refreshProfile: async () => { },
 });
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -36,7 +38,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isApproved, setIsApproved] = useState(true);
 
   const withTimeout = <T,>(promise: Promise<T>, timeoutMs: number = 8000): Promise<T> => {
-    const timeout = new Promise<never>((_, reject) => 
+    const timeout = new Promise<never>((_, reject) =>
       setTimeout(() => reject(new Error('Firebase Request Timeout')), timeoutMs)
     );
     return Promise.race([promise, timeout]);
@@ -46,7 +48,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const currentDeviceId = getDeviceId();
     const userDocRef = doc(db, 'users', currentUser.uid);
     const userDoc = await withTimeout(getDoc(userDocRef));
-    
+
     let userProfile: any = null;
 
     if (userDoc.exists()) {
@@ -63,7 +65,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.log('[Auth] No doc found for UID, searching by email:', emailLower);
       const q = query(collection(db, 'users'), where('email', '==', emailLower));
       const emailSnap = await withTimeout(getDocs(q));
-      
+
       if (!emailSnap.empty) {
         console.log('[Auth] Found pre-registered doc(s):', emailSnap.docs.map(d => d.id));
         // Use the first found doc's data as the source of truth
@@ -79,7 +81,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         };
         await withTimeout(setDoc(userDocRef, userProfile));
         console.log('[Auth] Merged pre-registered data into UID doc:', currentUser.uid);
-        
+
         // Delete ALL pre-registered/duplicate documents to prevent duplicates
         const toDelete = emailSnap.docs.filter(d => d.id !== currentUser.uid);
         if (toDelete.length > 0) {
@@ -95,7 +97,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const usersSnap = await withTimeout(getDocs(query(collection(db, 'users'), limit(1))));
         const isFirstUser = usersSnap.empty;
         const isOwner = currentUser.email === 'aliefneutron@gmail.com' || currentUser.email === 'aliefcorp.app@gmail.com';
-        
+
         userProfile = {
           uid: currentUser.uid,
           email: currentUser.email,
@@ -154,7 +156,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
-      
+
       try {
         if (currentUser) {
           setIsDeviceAuthorized(true);
@@ -176,9 +178,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const isAdmin = profile?.role === 'admin' || user?.email === 'aliefneutron@gmail.com' || user?.email === 'aliefcorp.app@gmail.com';
+  const isSuperAdmin = user?.email === 'aliefneutron@gmail.com' || user?.email === 'aliefcorp.app@gmail.com';
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, isAdmin, isDeviceAuthorized, isProfileComplete, isApproved, refreshProfile }}>
+    <AuthContext.Provider value={{ user, profile, loading, isAdmin, isSuperAdmin, isDeviceAuthorized, isProfileComplete, isApproved, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );
