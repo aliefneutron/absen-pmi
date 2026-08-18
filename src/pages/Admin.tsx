@@ -1223,7 +1223,7 @@ export default function Admin() {
                   // Late by 5 to 60 minutes
                   const lateMins = Math.floor(Math.random() * 55) + 5;
                   timestamp.setMinutes(timestamp.getMinutes() + lateMins);
-                  lateDuration = lateMins;
+                  lateDuration = lateMins * 60; // Convert to seconds
 
                   // Checkout is normal, maybe a bit late
                   checkOutTimestamp.setMinutes(checkOutTimestamp.getMinutes() + Math.floor(Math.random() * 30));
