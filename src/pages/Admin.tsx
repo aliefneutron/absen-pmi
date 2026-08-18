@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { useState, useEffect, useRef } from 'react';
 import { db } from '../lib/firebase';
-import { collection, query, orderBy, getDocs, doc, setDoc, getDoc, where, serverTimestamp, updateDoc, deleteField, deleteDoc, onSnapshot } from 'firebase/firestore';
+import { collection, query, orderBy, getDocs, doc, setDoc, getDoc, where, serverTimestamp, updateDoc, deleteField, deleteDoc, onSnapshot, writeBatch } from 'firebase/firestore';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '../components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
 import { Button } from '../components/ui/button';
@@ -1297,14 +1297,20 @@ export default function Admin() {
       // Delete attendance
       const attQuery = query(collection(db, 'attendance'), where('month', '==', historyImportMonth));
       const attSnap = await getDocs(attQuery);
-      const attPromises = attSnap.docs.map(d => deleteDoc(doc(db, 'attendance', d.id)));
 
       // Delete rosters
       const rosterQuery = query(collection(db, 'rosters'), where('month', '==', historyImportMonth));
       const rosterSnap = await getDocs(rosterQuery);
-      const rosterPromises = rosterSnap.docs.map(d => deleteDoc(doc(db, 'rosters', d.id)));
 
-      await Promise.all([...attPromises, ...rosterPromises]);
+      const allDocs = [...attSnap.docs.map(d => d.ref), ...rosterSnap.docs.map(d => d.ref)];
+
+      // Process in batches of 500
+      for (let i = 0; i < allDocs.length; i += 500) {
+        const batch = writeBatch(db);
+        const chunk = allDocs.slice(i, i + 500);
+        chunk.forEach(ref => batch.delete(ref));
+        await batch.commit();
+      }
 
       toast.success(`Berhasil menghapus ${attSnap.size} absen dan ${rosterSnap.size} jadwal.`, { id: toastId });
       fetchLogs(reportMonth);
