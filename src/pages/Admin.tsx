@@ -1910,21 +1910,16 @@ export default function Admin() {
     }
 
     let empWorkingDays = baseWorkingDays;
-    const bidang = (emp.bidang || '').toUpperCase();
+    const empRosters = rosters.filter(r => r.userEmail?.toLowerCase() === email && r.date.startsWith(reportMonth));
 
-    // Teknisi dan Keamanan menggunakan jadwal piket (roster)
-    if (bidang.includes('TEKNISI') || bidang.includes('KEAMANAN')) {
-      const empRosters = rosters.filter(r => r.userEmail?.toLowerCase() === email && r.date.startsWith(reportMonth));
-      if (empRosters.length > 0) {
-        empWorkingDays = empRosters.filter(r => {
-          const rDate = new Date(r.date);
-          return rDate <= end && r.shiftName !== 'OFF' && r.shiftName !== 'Libur';
-        }).length;
-      } else {
-        empWorkingDays = 0; // Jika tidak ada jadwal sama sekali
-      }
+    // Gunakan jadwal piket (roster dari Excel) sebagai acuan utama untuk SEMUA pegawai
+    if (empRosters.length > 0) {
+      empWorkingDays = empRosters.filter(r => {
+        const rDate = new Date(r.date);
+        return rDate <= end && r.shiftName !== 'OFF' && r.shiftName !== 'Libur';
+      }).length;
     } else {
-      // Administrasi, Kebersihan, dll menggunakan baseWorkingDays (hari normal dikurangi libur)
+      // Jika tidak ada jadwal sama sekali di Excel, baru gunakan settingan default
       empWorkingDays = baseWorkingDays;
     }
 
