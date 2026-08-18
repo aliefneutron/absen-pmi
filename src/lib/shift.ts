@@ -15,38 +15,38 @@ export const DEFAULT_SHIFTS: Shift[] = [
 
 export function getCurrentShift(now: Date, shiftSettings?: Shift[], assignedShiftName?: string) {
   let shifts = shiftSettings && shiftSettings.length > 0 ? shiftSettings : DEFAULT_SHIFTS;
-  
+
   if (assignedShiftName) {
-    if (assignedShiftName === 'OFF') return { isOff: true };
+    if (assignedShiftName === 'OFF' || assignedShiftName === 'Libur') return { isOff: true };
     const matchedShift = shifts.find(s => s.name === assignedShiftName);
     if (!matchedShift) return null;
-    
+
     const start = matchedShift.startTime.trim();
     const end = matchedShift.endTime.trim();
     const isCrossMidnight = start > end;
-    
+
     let shiftStartDate = parse(start, 'HH:mm', now);
     shiftStartDate.setSeconds(0);
     shiftStartDate.setMilliseconds(0);
-    
+
     let shiftEndDate = parse(end, 'HH:mm', now);
     shiftEndDate.setSeconds(59);
     shiftEndDate.setMilliseconds(999);
-    
+
     if (isCrossMidnight) {
       shiftEndDate = addMinutes(shiftEndDate, 1440);
     }
-    
+
     // Check window for today (30m buffer before start to 30m after end)
     const windowStart = subMinutes(shiftStartDate, 30);
     const windowEnd = addMinutes(shiftEndDate, 30);
-    
+
     if (isCrossMidnight) {
       const prevStartDate = subMinutes(shiftStartDate, 1440);
       const prevEndDate = subMinutes(shiftEndDate, 1440);
       const prevWindowStart = subMinutes(prevStartDate, 30);
       const prevWindowEnd = addMinutes(prevEndDate, 30);
-      
+
       if (now >= prevWindowStart && now <= prevWindowEnd) {
         const yesterday = new Date(now);
         yesterday.setDate(now.getDate() - 1);
@@ -56,20 +56,20 @@ export function getCurrentShift(now: Date, shiftSettings?: Shift[], assignedShif
         };
       }
     }
-    
+
     if (now >= windowStart && now <= windowEnd) {
       return {
         shift: matchedShift,
         logicalDate: format(now, 'yyyy-MM-dd')
       };
     }
-    
+
     return {
       shift: matchedShift,
       logicalDate: format(now, 'yyyy-MM-dd')
     };
   }
-  
+
   // === NO SPECIFIC ASSIGNED SHIFT (AUTO-DETECT FROM ALL SHIFTS) ===
   type ShiftCandidate = {
     shift: Shift;
@@ -79,26 +79,26 @@ export function getCurrentShift(now: Date, shiftSettings?: Shift[], assignedShif
     checkOutEnd: Date;
     logicalDate: string;
   };
-  
+
   const candidates: ShiftCandidate[] = [];
-  
+
   for (const shift of shifts) {
     const start = shift.startTime.trim();
     const end = shift.endTime.trim();
     const isCrossMidnight = start > end;
-    
+
     let startDate = parse(start, 'HH:mm', now);
     startDate.setSeconds(0);
     startDate.setMilliseconds(0);
-    
+
     let endDate = parse(end, 'HH:mm', now);
     endDate.setSeconds(59);
     endDate.setMilliseconds(999);
-    
+
     if (isCrossMidnight) {
       endDate = addMinutes(endDate, 1440);
     }
-    
+
     candidates.push({
       shift,
       startDate,
@@ -107,7 +107,7 @@ export function getCurrentShift(now: Date, shiftSettings?: Shift[], assignedShif
       checkOutEnd: addMinutes(endDate, 30),
       logicalDate: format(now, 'yyyy-MM-dd')
     });
-    
+
     // Cross-midnight yesterday instance (e.g. shift malam starting 21:00 yesterday ending 07:00 today)
     if (isCrossMidnight) {
       const yesterday = new Date(now);
@@ -124,7 +124,7 @@ export function getCurrentShift(now: Date, shiftSettings?: Shift[], assignedShif
       });
     }
   }
-  
+
   // Priority 1: Shift whose primary working hours directly contain `now` (startDate <= now <= endDate)
   // If multiple overlap, the one with the latest startDate wins (e.g. at 14:05, Sore starting 14:00 wins over Pagi)
   const activeWorkingShifts = candidates.filter(c => now >= c.startDate && now <= c.endDate);
@@ -133,7 +133,7 @@ export function getCurrentShift(now: Date, shiftSettings?: Shift[], assignedShif
     const best = activeWorkingShifts[0];
     return { shift: best.shift, logicalDate: best.logicalDate };
   }
-  
+
   // Priority 2: In early check-in buffer (30m before shift starts: checkInStart <= now < startDate)
   const earlyShifts = candidates.filter(c => now >= c.checkInStart && now < c.startDate);
   if (earlyShifts.length > 0) {
@@ -141,7 +141,7 @@ export function getCurrentShift(now: Date, shiftSettings?: Shift[], assignedShif
     const best = earlyShifts[0];
     return { shift: best.shift, logicalDate: best.logicalDate };
   }
-  
+
   // Priority 3: In checkout window (endDate < now <= checkOutEnd)
   const checkoutShifts = candidates.filter(c => now > c.endDate && now <= c.checkOutEnd);
   if (checkoutShifts.length > 0) {
@@ -149,13 +149,13 @@ export function getCurrentShift(now: Date, shiftSettings?: Shift[], assignedShif
     const best = checkoutShifts[0];
     return { shift: best.shift, logicalDate: best.logicalDate };
   }
-  
+
   // Priority 4: Closest shift by start time
   candidates.sort((a, b) => Math.abs(a.startDate.getTime() - now.getTime()) - Math.abs(b.startDate.getTime() - now.getTime()));
   if (candidates.length > 0) {
     return { shift: candidates[0].shift, logicalDate: candidates[0].logicalDate };
   }
-  
+
   return null;
 }
 
@@ -163,23 +163,23 @@ export function getShiftStatus(now: Date, shift: Shift) {
   const start = shift.startTime.trim();
   const end = shift.endTime.trim();
   const isCrossMidnight = start > end;
-  
+
   // Use a base date for parsing and RESET seconds/ms to ensure clean comparison
   let shiftStartDate = parse(start, 'HH:mm', now);
   shiftStartDate.setSeconds(0);
   shiftStartDate.setMilliseconds(0);
-  
+
   // If it's a cross-midnight shift and current time is between 00:00 and shift end time,
   // it means the shift actually started on the previous calendar day.
   const currentTimeStr = format(now, 'HH:mm');
   if (isCrossMidnight && currentTimeStr <= end) {
     shiftStartDate = subMinutes(shiftStartDate, 1440); // subtract 24 hours
   }
-  
+
   // Tolerance in minutes (default: 30 minutes)
   const tolerance = (shift as any).toleranceMinutes ?? 30;
   const graceThreshold = addMinutes(shiftStartDate, tolerance);
-  
+
   // Set graceThreshold boundary to the end of that minute (59s 999ms)
   // For example: startTime = 07:00, tolerance = 30m -> graceThreshold = 07:30:59.999
   // Anyone checking in at 07:30:00 - 07:30:59 is considered ON TIME (Tepat Waktu).
@@ -187,10 +187,10 @@ export function getShiftStatus(now: Date, shift: Shift) {
   const graceThresholdEndOfMinute = new Date(graceThreshold);
   graceThresholdEndOfMinute.setSeconds(59);
   graceThresholdEndOfMinute.setMilliseconds(999);
-  
+
   // A record is late if current time is strictly AFTER the end of the grace threshold minute
   const isLate = isAfter(now, graceThresholdEndOfMinute);
-  
+
   return {
     isLate,
     startTime: format(shiftStartDate, 'HH:mm'),
@@ -200,19 +200,29 @@ export function getShiftStatus(now: Date, shift: Shift) {
   };
 }
 
-export function getCheckOutStatus(now: Date, shift: Shift) {
+export function getCheckOutStatus(now: Date, shift: Shift, logicalDateStr?: string) {
   const end = shift.endTime.trim();
   const start = shift.startTime.trim();
   const isCrossMidnight = start > end;
-  
-  let shiftEndDate = parse(end, 'HH:mm', now);
+
+  let baseDate = now;
+  if (logicalDateStr) {
+    baseDate = parse(logicalDateStr, 'yyyy-MM-dd', new Date());
+  }
+
+  let shiftEndDate = parse(end, 'HH:mm', baseDate);
   shiftEndDate.setSeconds(0);
   shiftEndDate.setMilliseconds(0);
-  
-  const currentTimeStr = format(now, 'HH:mm');
-  
-  if (isCrossMidnight && currentTimeStr >= start) {
-    shiftEndDate = addMinutes(shiftEndDate, 1440);
+
+  if (logicalDateStr) {
+    if (isCrossMidnight) {
+      shiftEndDate = addMinutes(shiftEndDate, 1440);
+    }
+  } else {
+    const currentTimeStr = format(now, 'HH:mm');
+    if (isCrossMidnight && currentTimeStr >= start) {
+      shiftEndDate = addMinutes(shiftEndDate, 1440);
+    }
   }
 
   const checkOutWindowStart = shiftEndDate;
@@ -220,12 +230,12 @@ export function getCheckOutStatus(now: Date, shift: Shift) {
   const checkOutWindowEnd = addMinutes(shiftEndDate, 30);
   checkOutWindowEnd.setSeconds(59);
   checkOutWindowEnd.setMilliseconds(999);
-  
+
   // Pegawai dapat absen pulang kapan saja setelah shift berakhir (termasuk jika terlambat)
   const isCheckOutWindow = now >= checkOutWindowStart;
   const isOnTimeCheckOut = now >= checkOutWindowStart && now <= checkOutWindowEnd;
   const isLateCheckOut = now > checkOutWindowEnd;
-  
+
   return {
     isCheckOutWindow,
     isOnTimeCheckOut,

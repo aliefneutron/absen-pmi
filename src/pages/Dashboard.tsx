@@ -26,8 +26,8 @@ const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: numbe
   const Δλ = ((lon2 - lon1) * Math.PI) / 180;
 
   const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
-            Math.cos(φ1) * Math.cos(φ2) *
-            Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    Math.cos(φ1) * Math.cos(φ2) *
+    Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 
   return R * c;
@@ -51,7 +51,7 @@ export default function Dashboard() {
   const [selectedLocationIndex, setSelectedLocationIndex] = useState<number | null>(null);
   const [selectedShiftOverride, setSelectedShiftOverride] = useState<string | null>(null);
   const [userRosters, setUserRosters] = useState<any[]>([]);
-  
+
   // Bidang Roster State
   const [showBidangRoster, setShowBidangRoster] = useState(false);
   const [bidangUsers, setBidangUsers] = useState<any[]>([]);
@@ -60,6 +60,7 @@ export default function Dashboard() {
 
   // Event attendance state
   const [hasAttendedEventToday, setHasAttendedEventToday] = useState(false);
+  const [hasCheckedOutEventToday, setHasCheckedOutEventToday] = useState(false);
   const [eventAttendanceData, setEventAttendanceData] = useState<any>(null);
 
   // Leave request states
@@ -122,13 +123,13 @@ export default function Dashboard() {
   // Shift state
   const activeShiftInfo = useMemo(() => {
     if (!settings) return null;
-    
+
     // 0. Manual shift selection by user
     if (selectedShiftOverride) {
       const manualInfo = getCurrentShift(now, settings.shifts, selectedShiftOverride);
       if (manualInfo) return manualInfo;
     }
-    
+
     // 1. Check today's assigned roster
     const todayStr = format(now, 'yyyy-MM-dd');
     const todayRoster = userRosters.find(r => r.date === todayStr);
@@ -171,8 +172,8 @@ export default function Dashboard() {
 
   const checkOutInfo = useMemo(() => {
     if (!effectiveShift || !now) return null;
-    return getCheckOutStatus(now, effectiveShift);
-  }, [now, effectiveShift]);
+    return getCheckOutStatus(now, effectiveShift, attendanceData?.date);
+  }, [now, effectiveShift, attendanceData?.date]);
 
   // Aturan Khusus Jumat: window absen pulang dimajukan ke sekitar 10:30
   const fridayEarlyInfo = useMemo(() => {
@@ -204,11 +205,11 @@ export default function Dashboard() {
       if (docSnap.exists()) {
         setSettings(docSnap.data());
       } else {
-        const defaultSettings = { 
-          officeLat: -6.1751, 
-          officeLng: 106.8272, 
-          radius: 100, 
-          startTime: '07:00', 
+        const defaultSettings = {
+          officeLat: -6.1751,
+          officeLng: 106.8272,
+          radius: 100,
+          startTime: '07:00',
           lateTime: '08:00',
           shifts: [
             { name: 'Pagi', startTime: '07:30', endTime: '13:30' },
@@ -248,11 +249,11 @@ export default function Dashboard() {
     if (!settings?.event?.isActive) return false;
     const assigned = (settings.event.assignedUserIds || []) as string[];
     if (!Array.isArray(assigned) || assigned.length === 0) return false;
-    
+
     const userUid = user?.uid;
     const userEmail = user?.email?.toLowerCase().trim();
     const profileId = (profile as any)?.id;
-    
+
     return Boolean(
       (userUid && assigned.includes(userUid)) ||
       (userEmail && assigned.includes(userEmail)) ||
@@ -282,7 +283,7 @@ export default function Dashboard() {
   // Derived state: Multi-Location Distance Calculation
   const locationStats = useMemo(() => {
     if (!location || !settings) return { isWithinRange: false, nearestDistance: null, nearestLocationName: null, isEventMatch: false };
-    
+
     let nearestDistance = Infinity;
     let nearestLocName: string | null = null;
     let withinAny = false;
@@ -334,9 +335,9 @@ export default function Dashboard() {
       if (dist <= globalRadius) withinAny = true;
     }
 
-    return { 
-      isWithinRange: withinAny, 
-      nearestDistance: nearestDistance === Infinity ? null : nearestDistance, 
+    return {
+      isWithinRange: withinAny,
+      nearestDistance: nearestDistance === Infinity ? null : nearestDistance,
       nearestLocationName: nearestLocName,
       nearestRadius: Number(settings.radius) || 100,
       isEventMatch
@@ -366,17 +367,23 @@ export default function Dashboard() {
 
     let regular = false;
     let event = false;
-    
+
+    let eventCheckedOut = false;
+
     // Check event attendance for today
     const todayStr = format(new Date(), 'yyyy-MM-dd');
     snap.docs.forEach((d) => {
       const data = d.data();
       if (data.isEvent && data.date === todayStr) {
         event = true;
+        if (data.checkOutTimestamp) {
+          eventCheckedOut = true;
+        }
         setEventAttendanceData(data);
       }
     });
     setHasAttendedEventToday(event);
+    setHasCheckedOutEventToday(eventCheckedOut);
 
     // First, check if there is an approved leave record for today (which applies all day)
     const leaveLog = snap.docs.find(d => {
@@ -399,7 +406,16 @@ export default function Dashboard() {
       const pendingCheckoutLog = snap.docs.find(d => {
         const data = d.data();
         const isDateMatch = data.date === targetDate || data.date === yesterdayStr;
-        return isDateMatch && !data.isLeave && !data.isEvent && data.shiftName && !data.checkOutTimestamp;
+        if (!isDateMatch || data.isLeave || data.isEvent || !data.shiftName || data.checkOutTimestamp) return false;
+
+        // Cek apakah window absen pulang untuk shift ini masih aktif
+        const shiftObj = settings?.shifts?.find((s: any) => s.name === data.shiftName);
+        if (shiftObj) {
+          const coStatus = getCheckOutStatus(now, shiftObj, data.date);
+          const fridayInfo = getFridayEarlyCheckOutStatus(now, shiftObj, settings.fridayEarlyEnd || null, profile?.bidang || null);
+          return coStatus.isCheckOutWindow || (fridayInfo?.isCheckOutWindow ?? false);
+        }
+        return false;
       });
 
       if (pendingCheckoutLog) {
@@ -454,20 +470,20 @@ export default function Dashboard() {
   const isScheduleDay = useMemo(() => {
     // Mode Acara BYPASS semua pembatasan hari
     if (activeEvent && isEventTime) return true;
-    return settings?.enabledDays 
+    return settings?.enabledDays
       ? settings.enabledDays.includes(format(now, 'EEEE'))
       : (isMonday(now) || isTuesday(now) || isWednesday(now) || isThursday(now) || isFriday(now));
   }, [settings, now, activeEvent, isEventTime]);
 
-  console.log('Dashboard State:', { 
-    hasUser: !!user, 
-    hasLocation: !!location, 
-    hasSettings: !!settings, 
+  console.log('Dashboard State:', {
+    hasUser: !!user,
+    hasLocation: !!location,
+    hasSettings: !!settings,
     hasPhoto: !!photo,
     isScheduleDay,
     loading
   });
-  
+
 
   const startCamera = async () => {
     if (!isWithinRange) {
@@ -490,14 +506,14 @@ export default function Dashboard() {
     if (videoRef.current && canvasRef.current) {
       const video = videoRef.current;
       const canvas = canvasRef.current;
-      
+
       // Compress foto secara otomatis (resize & compress) agar ukuran minimum (~50-100KB)
-      const maxWidth = 480; 
+      const maxWidth = 480;
       const scale = Math.min(maxWidth / video.videoWidth, 1);
-      
+
       canvas.width = video.videoWidth * scale;
       canvas.height = video.videoHeight * scale;
-      
+
       const ctx = canvas.getContext('2d');
       if (ctx) {
         // Horizontal flip for mirror effect
@@ -505,11 +521,11 @@ export default function Dashboard() {
         ctx.scale(-1, 1);
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       }
-      
+
       // Kompresi kualitas gambar (0.4) agar hemat Firestore & Storage
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.4); 
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.4);
       setPhoto(dataUrl);
-      
+
       // Stop camera
       const stream = video.srcObject as MediaStream;
       stream.getTracks().forEach(track => track.stop());
@@ -531,16 +547,16 @@ export default function Dashboard() {
 
     setLoading(true);
     const toastId = toast.loading('Memproses absensi...');
-    
-    const timeoutPromise = new Promise((_, reject) => 
+
+    const timeoutPromise = new Promise((_, reject) =>
       setTimeout(() => reject(new Error('Koneksi lambat. Silakan coba lagi.')), 60000)
     );
-    
+
     try {
       const attendancePromise = (async () => {
         if (!isWithinRange) {
-          const nearestMsg = locationStats.nearestLocationName 
-            ? `dari ${locationStats.nearestLocationName}` 
+          const nearestMsg = locationStats.nearestLocationName
+            ? `dari ${locationStats.nearestLocationName}`
             : 'dari lokasi absen';
           throw new Error(`Anda berada di luar jangkauan (${Math.round(distance || 0)}m ${nearestMsg})`);
         }
@@ -564,30 +580,43 @@ export default function Dashboard() {
             throw new Error(`Absen acara sudah ditutup. Berakhir pukul ${activeEvent.endTime} WIB`);
           }
           // Cegah double absen acara
-          if (hasAttendedEventToday) {
-            throw new Error('Anda sudah melakukan absen untuk acara ini hari ini.');
+          if (hasAttendedEventToday && hasCheckedOutEventToday) {
+            throw new Error('Anda sudah melakukan absen pulang untuk acara ini hari ini.');
           }
 
           const eventRecordId = `${user.uid}_${today}_event`;
-          const eventRecord = {
-            userId: user.uid,
-            userName: profile?.displayName || user.displayName || user.email?.split('@')[0] || 'Unknown',
-            userEmail: user.email,
-            timestamp: serverTimestamp(),
-            date: today,
-            month: today.substring(0, 7),
-            location: location,
-            isWithinRange: true,
-            isLate: false,
-            isEvent: true,
-            eventName: activeEvent.name,
-            selfieUrl: selfieUrl,
-          };
 
-          await setDoc(doc(db, 'attendance', eventRecordId), eventRecord);
-          setHasAttendedEventToday(true);
-          setEventAttendanceData({ ...eventRecord, timestamp: now });
-          return `Absen Acara "${activeEvent.name}" berhasil dicatat!`;
+          if (hasAttendedEventToday && !hasCheckedOutEventToday) {
+            const updateData = {
+              checkOutTimestamp: serverTimestamp(),
+              checkOutLocation: location,
+              checkOutSelfieUrl: selfieUrl,
+            };
+            await setDoc(doc(db, 'attendance', eventRecordId), updateData, { merge: true });
+            setHasCheckedOutEventToday(true);
+            setEventAttendanceData((prev: any) => ({ ...prev, ...updateData, checkOutTimestamp: now }));
+            return `Absen Pulang Acara "${activeEvent.name}" berhasil dicatat!`;
+          } else {
+            const eventRecord = {
+              userId: user.uid,
+              userName: profile?.displayName || user.displayName || user.email?.split('@')[0] || 'Unknown',
+              userEmail: user.email,
+              timestamp: serverTimestamp(),
+              date: today,
+              month: today.substring(0, 7),
+              location: location,
+              isWithinRange: true,
+              isLate: false,
+              isEvent: true,
+              eventName: activeEvent.name,
+              selfieUrl: selfieUrl,
+            };
+
+            await setDoc(doc(db, 'attendance', eventRecordId), eventRecord);
+            setHasAttendedEventToday(true);
+            setEventAttendanceData({ ...eventRecord, timestamp: now });
+            return `Absen Acara "${activeEvent.name}" berhasil dicatat!`;
+          }
         }
 
         // === MODE REGULER (dengan shift) ===
@@ -623,7 +652,7 @@ export default function Dashboard() {
         } else {
           const { isLate, graceThresholdDate, shiftStartDate } = getShiftStatus(now, currentShift!);
           const lateDuration = isLate ? Math.max(0, Math.floor((now.getTime() - shiftStartDate.getTime()) / 1000)) : 0;
-          
+
           const record = {
             userId: user.uid,
             userName: profile?.displayName || user.displayName || user.email?.split('@')[0] || 'Unknown',
@@ -644,7 +673,7 @@ export default function Dashboard() {
           setHasAttendedToday(true);
           setRecordedTime(now);
           setAttendanceData(record);
-          return isLate ? `Absen Datang Shift ${currentShift.name} (Terlambat ${Math.floor(lateDuration/60)}m) tercatat!` : `Absen Datang Shift ${currentShift.name} berhasil dicatat!`;
+          return isLate ? `Absen Datang Shift ${currentShift.name} (Terlambat ${Math.floor(lateDuration / 60)}m) tercatat!` : `Absen Datang Shift ${currentShift.name} berhasil dicatat!`;
         }
       })();
 
@@ -659,7 +688,7 @@ export default function Dashboard() {
   };
 
   // Apakah masih butuh absen acara (acara aktif, sedang jam acara, belum absen)
-  const needsEventAttendance = activeEvent && isEventTime && !hasAttendedEventToday;
+  const needsEventAttendance = activeEvent && isEventTime && (!hasAttendedEventToday || !hasCheckedOutEventToday);
 
 
 
@@ -678,11 +707,11 @@ export default function Dashboard() {
       const endStr = format(endOfMonth(now), 'yyyy-MM-dd');
       const rosterQ = query(collection(db, 'rosters'), where('date', '>=', startStr), where('date', '<=', endStr));
       const rosterSnap = await getDocs(rosterQ);
-      
+
       const bRosters = rosterSnap.docs
         .map(d => d.data())
         .filter(r => bUsers.some(u => u.uid === r.userId));
-        
+
       setBidangRosters(bRosters);
       setShowBidangRoster(true);
     } catch (err) {
@@ -773,8 +802,8 @@ export default function Dashboard() {
                   <div className="space-y-1.5">
                     <Label className="text-[10px] font-black uppercase text-slate-400">Nama Pegawai</Label>
                     <div className="relative">
-                      <Input 
-                        value={profile?.displayName || user?.displayName || user?.email?.split('@')[0] || ''} 
+                      <Input
+                        value={profile?.displayName || user?.displayName || user?.email?.split('@')[0] || ''}
                         readOnly
                         className="h-9 text-xs bg-slate-50 border-slate-200 text-slate-500 font-bold uppercase cursor-not-allowed pr-7 truncate"
                       />
@@ -784,8 +813,8 @@ export default function Dashboard() {
                   <div className="space-y-1.5">
                     <Label className="text-[10px] font-black uppercase text-slate-400">Bidang</Label>
                     <div className="relative">
-                      <Input 
-                        value={profile?.bidang || 'Umum'} 
+                      <Input
+                        value={profile?.bidang || 'Umum'}
                         readOnly
                         className="h-9 text-xs bg-slate-50 border-slate-200 text-slate-500 font-bold uppercase cursor-not-allowed pr-7 truncate"
                       />
@@ -796,9 +825,9 @@ export default function Dashboard() {
 
                 <div className="space-y-1.5">
                   <Label className="text-[10px] font-black uppercase text-slate-400">Jenis Izin</Label>
-                  <select 
-                    value={leaveForm.leaveType} 
-                    onChange={e => setLeaveForm({...leaveForm, leaveType: e.target.value})}
+                  <select
+                    value={leaveForm.leaveType}
+                    onChange={e => setLeaveForm({ ...leaveForm, leaveType: e.target.value })}
                     className="flex h-9 w-full rounded-md border border-slate-200 bg-white px-3 py-1 text-xs shadow-sm focus-visible:outline-none focus:ring-1 focus:ring-red-500 font-bold uppercase text-slate-700 cursor-pointer"
                   >
                     <option value="I">Izin (I)</option>
@@ -811,39 +840,39 @@ export default function Dashboard() {
                 <div className="grid grid-cols-1 gap-3">
                   <div className="space-y-1.5">
                     <Label className="text-[10px] font-black uppercase text-slate-400">Tanggal Mulai</Label>
-                    <Input 
-                      type="date" 
-                      value={leaveForm.startDate} 
-                      onChange={e => setLeaveForm({...leaveForm, startDate: e.target.value})}
+                    <Input
+                      type="date"
+                      value={leaveForm.startDate}
+                      onChange={e => setLeaveForm({ ...leaveForm, startDate: e.target.value })}
                       className="h-9 text-xs bg-white"
                     />
                   </div>
                   <div className="space-y-1.5">
                     <Label className="text-[10px] font-black uppercase text-slate-400">Tanggal Selesai</Label>
-                    <Input 
-                      type="date" 
-                      value={leaveForm.endDate} 
-                      onChange={e => setLeaveForm({...leaveForm, endDate: e.target.value})}
+                    <Input
+                      type="date"
+                      value={leaveForm.endDate}
+                      onChange={e => setLeaveForm({ ...leaveForm, endDate: e.target.value })}
                       className="h-9 text-xs bg-white"
                     />
                   </div>
                 </div>
 
                 <div className="space-y-1.5">
-                   <Label className="text-[10px] font-black uppercase text-slate-400">Keterangan / Alasan</Label>
-                   <Input 
-                     value={leaveForm.reason} 
-                     onChange={e => setLeaveForm({...leaveForm, reason: e.target.value})}
-                     placeholder="Tulis alasan izin..."
-                     className="h-9 text-xs bg-white"
-                   />
+                  <Label className="text-[10px] font-black uppercase text-slate-400">Keterangan / Alasan</Label>
+                  <Input
+                    value={leaveForm.reason}
+                    onChange={e => setLeaveForm({ ...leaveForm, reason: e.target.value })}
+                    placeholder="Tulis alasan izin..."
+                    className="h-9 text-xs bg-white"
+                  />
                 </div>
 
                 <div className="space-y-1.5">
                   <Label className="text-[10px] font-black uppercase text-slate-400">Unggah File Lampiran (Opsional)</Label>
                   <div className="relative">
-                    <Input 
-                      type="file" 
+                    <Input
+                      type="file"
                       accept="image/*,application/pdf"
                       onChange={handleFileChange}
                       className="h-9 text-xs bg-white file:bg-slate-100 file:border-0 file:text-[10px] file:font-black file:uppercase file:tracking-wider file:text-slate-600 file:mr-2 cursor-pointer border-slate-200"
@@ -857,7 +886,7 @@ export default function Dashboard() {
                 </div>
 
                 <Button type="submit" disabled={submittingLeave} className="w-full h-9 bg-red-600 hover:bg-red-700 text-white font-black uppercase tracking-widest text-[9px] shadow-lg shadow-red-100">
-                   {submittingLeave ? 'MENGIRIM...' : 'KIRIM PENGAJUAN'}
+                  {submittingLeave ? 'MENGIRIM...' : 'KIRIM PENGAJUAN'}
                 </Button>
               </form>
             </CardContent>
@@ -895,16 +924,16 @@ export default function Dashboard() {
                           {leave.startDate === leave.endDate ? (
                             <span>{leave.startDate}</span>
                           ) : (
-                            <span>{leave.startDate}<br/><span className="text-[8px] text-slate-400">s/d</span><br/>{leave.endDate}</span>
+                            <span>{leave.startDate}<br /><span className="text-[8px] text-slate-400">s/d</span><br />{leave.endDate}</span>
                           )}
                         </TableCell>
                         <TableCell className="py-2.5 text-[10px] font-semibold text-slate-700 italic max-w-[120px]" title={leave.reason}>
                           <div className="truncate">"{leave.reason}"</div>
                           {leave.attachmentUrl && (
-                            <a 
-                              href={leave.attachmentUrl} 
-                              target="_blank" 
-                              rel="noreferrer" 
+                            <a
+                              href={leave.attachmentUrl}
+                              target="_blank"
+                              rel="noreferrer"
                               className="inline-flex items-center gap-1 text-[8px] font-black uppercase text-red-600 hover:text-red-700 mt-1 cursor-pointer hover:underline"
                             >
                               <Paperclip size={10} /> Lihat Lampiran
@@ -954,7 +983,7 @@ export default function Dashboard() {
                 </p>
                 {hasAttendedEventToday && (
                   <p className="text-emerald-200 text-[9px] font-black uppercase tracking-widest flex items-center gap-1 mt-1">
-                    <CheckCircle2 size={10} /> Absen acara sudah tercatat
+                    <CheckCircle2 size={10} /> {hasCheckedOutEventToday ? 'Absen pulang acara tercatat' : 'Absen datang acara tercatat'}
                   </p>
                 )}
               </div>
@@ -981,12 +1010,12 @@ export default function Dashboard() {
               return (
                 <Card className="border border-slate-200 shadow-sm overflow-hidden flex flex-col bg-white animate-in fade-in duration-300">
                   <CardHeader className="bg-slate-50/50 border-b py-3 px-5 flex flex-row items-center justify-between space-y-0">
-                     <div className="flex flex-col">
-                        <p className="text-base font-black text-red-600 uppercase tracking-tight leading-tight">Halo, {profile?.displayName || user?.displayName?.split(' ')[0] || 'Pegawai'}</p>
-                        {profile?.nip && <p className="text-[10px] font-mono font-bold text-slate-600 tracking-wider">ID Pegawai: {profile.nip}</p>}
-                        <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">{profile?.bidang || 'Staf Operasional'}</p>
-                     </div>
-                     <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[9px] font-black rounded italic uppercase border border-emerald-200">Izin Disetujui</span>
+                    <div className="flex flex-col">
+                      <p className="text-base font-black text-red-600 uppercase tracking-tight leading-tight">Halo, {profile?.displayName || user?.displayName?.split(' ')[0] || 'Pegawai'}</p>
+                      {profile?.nip && <p className="text-[10px] font-mono font-bold text-slate-600 tracking-wider">ID Pegawai: {profile.nip}</p>}
+                      <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">{profile?.bidang || 'Staf Operasional'}</p>
+                    </div>
+                    <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[9px] font-black rounded italic uppercase border border-emerald-200">Izin Disetujui</span>
                   </CardHeader>
                   <CardContent className="pt-8 pb-8 px-8 flex flex-col items-center justify-center space-y-6">
                     <div className="mx-auto mb-2 relative">
@@ -1017,12 +1046,12 @@ export default function Dashboard() {
               return (
                 <Card className="border border-slate-200 shadow-sm overflow-hidden flex flex-col bg-emerald-50/50 animate-in fade-in duration-300">
                   <CardHeader className="bg-emerald-100/50 border-b border-emerald-200/60 py-3 px-5 flex flex-row items-center justify-between space-y-0">
-                     <div className="flex flex-col">
-                        <p className="text-base font-black text-emerald-800 uppercase tracking-tight leading-tight">Halo, {profile?.displayName || user?.displayName?.split(' ')[0] || 'Pegawai'}</p>
-                        {profile?.nip && <p className="text-[10px] font-mono font-bold text-emerald-700 tracking-wider">ID Pegawai: {profile.nip}</p>}
-                        <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mb-1">{profile?.bidang || 'Staf Operasional'}</p>
-                     </div>
-                     <span className="px-2 py-0.5 bg-emerald-600 text-white text-[9px] font-black rounded italic uppercase border border-emerald-700 shadow-sm">Sudah Absen</span>
+                    <div className="flex flex-col">
+                      <p className="text-base font-black text-emerald-800 uppercase tracking-tight leading-tight">Halo, {profile?.displayName || user?.displayName?.split(' ')[0] || 'Pegawai'}</p>
+                      {profile?.nip && <p className="text-[10px] font-mono font-bold text-emerald-700 tracking-wider">ID Pegawai: {profile.nip}</p>}
+                      <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mb-1">{profile?.bidang || 'Staf Operasional'}</p>
+                    </div>
+                    <span className="px-2 py-0.5 bg-emerald-600 text-white text-[9px] font-black rounded italic uppercase border border-emerald-700 shadow-sm">Sudah Absen</span>
                   </CardHeader>
                   <CardContent className="pt-8 pb-8 px-8 flex flex-col items-center justify-center space-y-6">
                     <div className="mx-auto mb-2 relative">
@@ -1034,13 +1063,13 @@ export default function Dashboard() {
                       </div>
                     </div>
                     <CardTitle className="text-emerald-800 text-lg font-black uppercase tracking-tight text-center">
-                      {isWaitingForCheckOut 
+                      {isWaitingForCheckOut
                         ? (attendanceData?.shiftName ? `Sudah Absen Datang Shift ${attendanceData.shiftName}` : 'Sudah Absen Datang')
                         : (attendanceData?.shiftName ? `Absen Selesai Shift ${attendanceData.shiftName}` : 'Absen Selesai')}
                     </CardTitle>
                     <p className="text-emerald-600 text-xs font-semibold text-center leading-normal max-w-xs">
-                      {isWaitingForCheckOut 
-                        ? 'Terima kasih, absen datang Anda sudah tercatat. Jangan lupa untuk absen pulang nanti.' 
+                      {isWaitingForCheckOut
+                        ? 'Terima kasih, absen datang Anda sudah tercatat. Jangan lupa untuk absen pulang nanti.'
                         : 'Terima kasih, kehadiran dan jam pulang Anda hari ini sudah tercatat.'}
                     </p>
                     <div className="grid grid-cols-2 gap-4 w-full max-w-xs">
@@ -1061,12 +1090,12 @@ export default function Dashboard() {
         ) : isOffDay && !hasAttendedToday ? (
           <Card className="border border-slate-200 shadow-sm overflow-hidden flex flex-col bg-amber-50 animate-in fade-in duration-300">
             <CardHeader className="bg-amber-100/50 border-b border-amber-200/60 py-3 px-5 flex flex-row items-center justify-between space-y-0">
-               <div className="flex flex-col">
-                  <p className="text-base font-black text-amber-800 uppercase tracking-tight leading-tight">Halo, {profile?.displayName || user?.displayName?.split(' ')[0] || 'Pegawai'}</p>
-                  {profile?.nip && <p className="text-[10px] font-mono font-bold text-amber-700 tracking-wider">ID Pegawai: {profile.nip}</p>}
-                  <p className="text-[10px] font-bold text-amber-600 uppercase tracking-widest mb-1">{profile?.bidang || 'Staf Operasional'}</p>
-               </div>
-               <span className="px-2 py-0.5 bg-amber-500 text-white text-[9px] font-black rounded italic uppercase border border-amber-600 shadow-sm">Libur</span>
+              <div className="flex flex-col">
+                <p className="text-base font-black text-amber-800 uppercase tracking-tight leading-tight">Halo, {profile?.displayName || user?.displayName?.split(' ')[0] || 'Pegawai'}</p>
+                {profile?.nip && <p className="text-[10px] font-mono font-bold text-amber-700 tracking-wider">ID Pegawai: {profile.nip}</p>}
+                <p className="text-[10px] font-bold text-amber-600 uppercase tracking-widest mb-1">{profile?.bidang || 'Staf Operasional'}</p>
+              </div>
+              <span className="px-2 py-0.5 bg-amber-500 text-white text-[9px] font-black rounded italic uppercase border border-amber-600 shadow-sm">Libur</span>
             </CardHeader>
             <CardContent className="pt-8 pb-8 px-8 flex flex-col items-center justify-center space-y-6">
               <div className="mx-auto mb-2 relative">
@@ -1086,14 +1115,14 @@ export default function Dashboard() {
         ) : (
           <Card className="border border-slate-200 shadow-sm overflow-hidden flex flex-col bg-white">
             <CardHeader className="bg-slate-50/50 border-b py-3 px-5 flex flex-row items-center justify-between space-y-0">
-               <div className="flex flex-col">
-                  <p className="text-base font-black text-red-600 uppercase tracking-tight leading-tight">Halo, {profile?.displayName || user?.displayName?.split(' ')[0] || 'Pegawai'}</p>
-                  {profile?.nip && <p className="text-[10px] font-mono font-bold text-slate-600 tracking-wider">ID Pegawai: {profile.nip}</p>}
-                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">{profile?.bidang || 'Staf Operasional'}</p>
-               </div>
-               <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[9px] font-black rounded italic uppercase border border-emerald-200">Lokasi Terverifikasi</span>
+              <div className="flex flex-col">
+                <p className="text-base font-black text-red-600 uppercase tracking-tight leading-tight">Halo, {profile?.displayName || user?.displayName?.split(' ')[0] || 'Pegawai'}</p>
+                {profile?.nip && <p className="text-[10px] font-mono font-bold text-slate-600 tracking-wider">ID Pegawai: {profile.nip}</p>}
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">{profile?.bidang || 'Staf Operasional'}</p>
+              </div>
+              <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[9px] font-black rounded italic uppercase border border-emerald-200">Lokasi Terverifikasi</span>
             </CardHeader>
-            
+
             <CardContent className="pt-6 pb-8 px-8 flex flex-col items-center justify-center space-y-6">
               <div className="text-center space-y-1 mb-1">
                 <h2 className="text-4xl font-black tabular-nums tracking-tighter text-slate-800">
@@ -1117,7 +1146,7 @@ export default function Dashboard() {
                           onClick={() => setSelectedShiftOverride(s.name)}
                           className={cn(
                             "px-2.5 py-1 rounded-xl text-[10px] font-black uppercase tracking-wider transition-all border shadow-xs flex items-center gap-1",
-                            isActive 
+                            isActive
                               ? "bg-red-600 text-white border-red-600 shadow-red-200 ring-2 ring-red-300 scale-105"
                               : "bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100 opacity-70 hover:opacity-100"
                           )}
@@ -1148,8 +1177,8 @@ export default function Dashboard() {
                     onClick={startCamera}
                     className={cn(
                       "absolute inset-0 flex flex-col items-center justify-center gap-3 transition-all",
-                      isWithinRange 
-                        ? "cursor-pointer bg-slate-800/80 hover:bg-slate-800 group-hover:scale-105" 
+                      isWithinRange
+                        ? "cursor-pointer bg-slate-800/80 hover:bg-slate-800 group-hover:scale-105"
                         : "cursor-not-allowed bg-slate-900/90 grayscale"
                     )}
                   >
@@ -1180,9 +1209,9 @@ export default function Dashboard() {
                   <>
                     <img src={photo} className="w-full h-full object-cover" />
                     <div className="absolute inset-0 opacity-20 bg-red-900/10 pointer-events-none" />
-                    <Button 
-                      onClick={() => setPhoto(null)} 
-                      variant="secondary" size="sm" 
+                    <Button
+                      onClick={() => setPhoto(null)}
+                      variant="secondary" size="sm"
                       className="absolute top-4 right-4 rounded-full h-8 px-4 text-[10px] font-black uppercase bg-white/90 backdrop-blur-sm border shadow-sm"
                     >
                       Ulangi
@@ -1192,8 +1221,8 @@ export default function Dashboard() {
                 <div className="absolute bottom-4 right-4 px-2 py-0.5 bg-black/40 backdrop-blur-md rounded text-[8px] font-bold text-white uppercase tracking-tighter border border-white/10">Aman 1080p</div>
               </div>
 
-              <Button 
-                disabled={loading} 
+              <Button
+                disabled={loading}
                 onClick={() => {
                   if (!photo) toast.error('Silakan ambil foto selfie terlebih dahulu');
                   else if (!location) toast.error('Sedang mencari lokasi GPS...');
@@ -1202,11 +1231,13 @@ export default function Dashboard() {
                 }}
                 className="w-full max-w-[280px] h-auto bg-red-600 hover:bg-red-700 text-white rounded-2xl font-black shadow-xl shadow-red-200 transition-all active:scale-95 py-5 px-4 text-lg tracking-wide leading-none uppercase"
               >
-                {loading 
-                  ? 'MEMPROSES...' 
-                  : (hasAttendedToday && !hasCheckedOutToday 
+                {loading
+                  ? 'MEMPROSES...'
+                  : (needsEventAttendance
+                    ? (hasAttendedEventToday && !hasCheckedOutEventToday ? `ABSEN PULANG ACARA "${activeEvent.name.toUpperCase()}"` : `ABSEN DATANG ACARA "${activeEvent.name.toUpperCase()}"`)
+                    : (hasAttendedToday && !hasCheckedOutToday
                       ? `ABSEN PULANG SHIFT ${effectiveShift ? effectiveShift.name.toUpperCase() : ''}${checkOutInfo?.isLateCheckOut ? ' (TERLAMBAT)' : ''}`
-                      : `ABSEN DATANG ${currentShift ? `SHIFT ${currentShift.name.toUpperCase()}` : ''}`)}
+                      : `ABSEN DATANG ${currentShift ? `SHIFT ${currentShift.name.toUpperCase()}` : ''}`))}
               </Button>
 
               {/* Info jam khusus Jumat */}
@@ -1270,7 +1301,7 @@ export default function Dashboard() {
                   <div className="flex justify-between items-center mb-1">
                     <p className="text-[9px] text-slate-400 font-bold uppercase tracking-widest">Titik Absen</p>
                     {settings?.locations?.length > 0 && (
-                      <button 
+                      <button
                         onClick={() => setSelectedLocationIndex(null)}
                         className={cn(
                           "text-[8px] font-black uppercase tracking-tighter transition-colors",
@@ -1286,7 +1317,7 @@ export default function Dashboard() {
                       <img src="/icon-512.png" alt="Logo" className="w-full h-full object-contain" />
                     </div>
                     {settings?.locations?.length > 0 ? (
-                      <select 
+                      <select
                         value={selectedLocationIndex === null ? "" : selectedLocationIndex}
                         onChange={(e) => {
                           const val = e.target.value;
@@ -1307,12 +1338,12 @@ export default function Dashboard() {
                       </p>
                     )}
                   </div>
-                   <div className="absolute right-2 top-2 opacity-10 group-hover:opacity-20 transition-opacity">
+                  <div className="absolute right-2 top-2 opacity-10 group-hover:opacity-20 transition-opacity">
                     <Shield size={12} />
                   </div>
                 </div>
               </div>
-              
+
               <div className="flex flex-col sm:flex-row items-center justify-center gap-x-6 gap-y-3 px-1">
                 <div className="flex items-center gap-2">
                   <Clock size={14} className="text-red-400" />
@@ -1321,11 +1352,11 @@ export default function Dashboard() {
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                   <div className={cn(
-                     "w-2 h-2 rounded-full animate-pulse",
-                     location ? "bg-emerald-500" : "bg-amber-500"
-                   )} />
-                   <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Telemetri Langsung</span>
+                  <div className={cn(
+                    "w-2 h-2 rounded-full animate-pulse",
+                    location ? "bg-emerald-500" : "bg-amber-500"
+                  )} />
+                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Telemetri Langsung</span>
                 </div>
               </div>
             </CardFooter>
@@ -1338,217 +1369,218 @@ export default function Dashboard() {
             <h3 className="text-xs font-black text-slate-500 uppercase tracking-widest">Daftar Notifikasi</h3>
           </CardHeader>
           <CardContent className="p-4 space-y-3">
-             <div className="flex items-start gap-4 p-3 bg-red-50/50 border-l-4 border-red-500 rounded-lg text-xs leading-relaxed group hover:bg-red-50 transition-colors">
-               <div className="w-2 h-2 bg-red-500 rounded-full mt-1.5 animate-pulse shrink-0"></div>
-               <div>
-                  <p className="text-red-900 font-bold uppercase text-[10px] mb-0.5 tracking-tight">Siaran Jadwal</p>
-                  <p className="text-red-800 opacity-80">
-                    {activeEvent 
-                      ? `MODE ACARA AKTIF: ${activeEvent.name}. Lokasi dan waktu absen disesuaikan untuk acara ini.`
-                      : `Siklus absen hari ${
-                          settings?.enabledDays && settings.enabledDays.length > 0
-                            ? (() => {
-                                const dayMap: any = {
-                                  'Monday': 'Senin', 'Tuesday': 'Selasa', 'Wednesday': 'Rabu',
-                                  'Thursday': 'Kamis', 'Friday': 'Jumat', 'Saturday': 'Sabtu', 'Sunday': 'Minggu'
-                                };
-                                const translated = settings.enabledDays.map((d: string) => dayMap[d] || d);
-                                return translated.length > 1 ? `${translated[0]} - ${translated[translated.length - 1]}` : (translated[0] || 'Senin - Jumat');
-                              })()
-                            : 'Senin - Jumat'
-                        } tetap aktif. Pastikan verifikasi GPS menyala.`}
-                  </p>
-               </div>
-             </div>
-             {/* Notifikasi khusus event: sebelum waktu mulai */}
-             {activeEvent && !isEventTime && format(now, 'HH:mm') < activeEvent.startTime && (
-               <div className="flex items-start gap-4 p-3 bg-amber-50 border-l-4 border-amber-400 rounded-lg text-xs leading-relaxed">
-                 <div className="w-2 h-2 bg-amber-400 rounded-full mt-1.5 shrink-0"></div>
-                 <div>
-                   <p className="text-amber-900 font-bold uppercase text-[10px] mb-0.5 tracking-tight">Sistem Siaga Acara</p>
-                   <p className="text-amber-800 opacity-80">Absen acara "{activeEvent.name}" belum dibuka. Silakan kembali pukul {activeEvent.startTime} WIB.</p>
-                 </div>
-               </div>
-             )}
-             {/* Notifikasi event sudah selesai */}
-             {hasAttendedEventToday && eventAttendanceData && (
-               <div className="flex items-start gap-4 p-3 bg-emerald-50 border-l-4 border-emerald-500 rounded-lg text-xs leading-relaxed">
-                 <div className="w-2 h-2 bg-emerald-500 rounded-full mt-1.5 shrink-0"></div>
-                 <div>
-                   <p className="text-emerald-900 font-bold uppercase text-[10px] mb-0.5 tracking-tight">Absen Acara Tercatat</p>
-                   <p className="text-emerald-800 opacity-80">Kehadiran acara "{eventAttendanceData.eventName}" berhasil dicatat pukul {eventAttendanceData.timestamp?.toDate ? format(eventAttendanceData.timestamp.toDate(), 'HH:mm') : format(new Date(eventAttendanceData.timestamp), 'HH:mm')} WIB.</p>
-                 </div>
-               </div>
-             )}
-             {(activeShiftInfo as any)?.isUpcoming && (
-                <div className="flex items-start gap-4 p-3 bg-slate-100 border-l-4 border-slate-400 rounded-lg text-xs leading-relaxed">
-                  <div className="w-2 h-2 bg-slate-400 rounded-full mt-1.5 shrink-0"></div>
-                  <div>
-                     <p className="text-slate-900 font-bold uppercase text-[10px] mb-0.5 tracking-tight">Sistem Siaga</p>
-                     <p className="text-slate-800 opacity-80">Absen Shift {currentShift?.name} belum dibuka. Silakan kembali pada pukul {currentShift?.startTime} WIB.</p>
-                  </div>
+            <div className="flex items-start gap-4 p-3 bg-red-50/50 border-l-4 border-red-500 rounded-lg text-xs leading-relaxed group hover:bg-red-50 transition-colors">
+              <div className="w-2 h-2 bg-red-500 rounded-full mt-1.5 animate-pulse shrink-0"></div>
+              <div>
+                <p className="text-red-900 font-bold uppercase text-[10px] mb-0.5 tracking-tight">Siaran Jadwal</p>
+                <p className="text-red-800 opacity-80">
+                  {activeEvent
+                    ? `MODE ACARA AKTIF: ${activeEvent.name}. Lokasi dan waktu absen disesuaikan untuk acara ini.`
+                    : `Siklus absen hari ${settings?.enabledDays && settings.enabledDays.length > 0
+                      ? (() => {
+                        const dayMap: any = {
+                          'Monday': 'Senin', 'Tuesday': 'Selasa', 'Wednesday': 'Rabu',
+                          'Thursday': 'Kamis', 'Friday': 'Jumat', 'Saturday': 'Sabtu', 'Sunday': 'Minggu'
+                        };
+                        const translated = settings.enabledDays.map((d: string) => dayMap[d] || d);
+                        return translated.length > 1 ? `${translated[0]} - ${translated[translated.length - 1]}` : (translated[0] || 'Senin - Jumat');
+                      })()
+                      : 'Senin - Jumat'
+                    } tetap aktif. Pastikan verifikasi GPS menyala.`}
+                </p>
+              </div>
+            </div>
+            {/* Notifikasi khusus event: sebelum waktu mulai */}
+            {activeEvent && !isEventTime && format(now, 'HH:mm') < activeEvent.startTime && (
+              <div className="flex items-start gap-4 p-3 bg-amber-50 border-l-4 border-amber-400 rounded-lg text-xs leading-relaxed">
+                <div className="w-2 h-2 bg-amber-400 rounded-full mt-1.5 shrink-0"></div>
+                <div>
+                  <p className="text-amber-900 font-bold uppercase text-[10px] mb-0.5 tracking-tight">Sistem Siaga Acara</p>
+                  <p className="text-amber-800 opacity-80">Absen acara "{activeEvent.name}" belum dibuka. Silakan kembali pukul {activeEvent.startTime} WIB.</p>
                 </div>
-              )}
-              {currentShift && getShiftStatus(now, currentShift).isLate && !hasAttendedToday && (
-                <div className="flex items-start gap-4 p-3 bg-rose-50 border-l-4 border-rose-500 rounded-lg text-xs leading-relaxed">
-                  <div className="w-2 h-2 bg-rose-500 rounded-full mt-1.5 animate-bounce shrink-0"></div>
-                  <div>
-                     <p className="text-rose-900 font-bold uppercase text-[10px] mb-0.5 tracking-tight">Peringatan Terlambat</p>
-                     <p className="text-rose-800 opacity-80">Waktu masuk Shift {currentShift.name} telah lewat batas toleransi ({getShiftStatus(now, currentShift).graceThreshold}). Status kehadiran akan ditandai terlambat.</p>
-                  </div>
+              </div>
+            )}
+            {/* Notifikasi event sudah selesai */}
+            {hasAttendedEventToday && eventAttendanceData && (
+              <div className="flex items-start gap-4 p-3 bg-emerald-50 border-l-4 border-emerald-500 rounded-lg text-xs leading-relaxed">
+                <div className="w-2 h-2 bg-emerald-500 rounded-full mt-1.5 shrink-0"></div>
+                <div>
+                  <p className="text-emerald-900 font-bold uppercase text-[10px] mb-0.5 tracking-tight">Absen Acara Tercatat</p>
+                  <p className="text-emerald-800 opacity-80">Kehadiran acara "{eventAttendanceData.eventName}" berhasil dicatat pukul {eventAttendanceData.timestamp?.toDate ? format(eventAttendanceData.timestamp.toDate(), 'HH:mm') : format(new Date(eventAttendanceData.timestamp), 'HH:mm')} WIB.</p>
                 </div>
-              )}
-              {hasAttendedToday && !hasCheckedOutToday && checkOutInfo?.isCheckOutWindow && (
-                checkOutInfo.isLateCheckOut ? (
-                  <div className="flex items-start gap-4 p-3 bg-amber-50 border-l-4 border-amber-500 rounded-lg text-xs leading-relaxed">
-                    <div className="w-2 h-2 bg-amber-500 rounded-full mt-1.5 animate-pulse shrink-0"></div>
-                    <div>
-                       <p className="text-amber-900 font-bold uppercase text-[10px] mb-0.5 tracking-tight">Absen Pulang (Terlambat)</p>
-                       <p className="text-amber-800 opacity-80">Jadwal Shift {effectiveShift?.name} telah berakhir pada pukul {effectiveShift?.endTime} WIB. Anda tetap dapat melakukan absen pulang sekarang.</p>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex items-start gap-4 p-3 bg-emerald-50 border-l-4 border-emerald-500 rounded-lg text-xs leading-relaxed">
-                    <div className="w-2 h-2 bg-emerald-500 rounded-full mt-1.5 animate-bounce shrink-0"></div>
-                    <div>
-                       <p className="text-emerald-900 font-bold uppercase text-[10px] mb-0.5 tracking-tight">Waktunya Pulang</p>
-                       <p className="text-emerald-800 opacity-80">Jendela waktu absen pulang untuk Shift {effectiveShift?.name} telah terbuka. Silakan lakukan absen pulang.</p>
-                    </div>
-                  </div>
-                )
-              )}
-              {/* Notifikasi khusus Jumat rawat jalan */}
-              {fridayEarlyInfo && !hasCheckedOutToday && (
-                <div className="flex items-start gap-4 p-3 bg-amber-50 border-l-4 border-amber-400 rounded-lg text-xs leading-relaxed">
-                  <div className="w-2 h-2 bg-amber-400 rounded-full mt-1.5 animate-pulse shrink-0"></div>
-                  <div>
-                    <p className="text-amber-900 font-bold uppercase text-[10px] mb-0.5 tracking-tight">⚕️ Jumat — Rawat Jalan</p>
-                    {fridayEarlyInfo.isTooEarly && (
-                      <p className="text-amber-800 opacity-80">
-                        Window absen pulang rawat jalan akan dibuka pukul <strong>{format(fridayEarlyInfo.checkOutWindowStart, 'HH:mm')}</strong> WIB
-                        (s.d. {format(fridayEarlyInfo.checkOutWindowEnd, 'HH:mm')} WIB).
-                      </p>
-                    )}
-                    {fridayEarlyInfo.isCheckOutWindow && hasAttendedToday && (
-                      <p className="text-amber-800 opacity-80">
-                        Window absen pulang rawat jalan <strong>sedang aktif</strong> hingga pukul {format(fridayEarlyInfo.checkOutWindowEnd, 'HH:mm')} WIB. Silakan absen pulang!
-                      </p>
-                    )}
-                    {fridayEarlyInfo.isCheckOutWindow && !hasAttendedToday && (
-                      <p className="text-amber-800 opacity-80">
-                        Absen datang terlebih dahulu, kemudian lakukan absen pulang rawat jalan sebelum pukul {format(fridayEarlyInfo.checkOutWindowEnd, 'HH:mm')} WIB.
-                      </p>
-                    )}
-                    {fridayEarlyInfo.isExpired && (
-                      <p className="text-amber-800 opacity-80">
-                        Window absen pulang rawat jalan telah berakhir (pukul {format(fridayEarlyInfo.checkOutWindowEnd, 'HH:mm')} WIB). Gunakan absen pulang shift normal.
-                      </p>
-                    )}
-                  </div>
+              </div>
+            )}
+            {(activeShiftInfo as any)?.isUpcoming && (
+              <div className="flex items-start gap-4 p-3 bg-slate-100 border-l-4 border-slate-400 rounded-lg text-xs leading-relaxed">
+                <div className="w-2 h-2 bg-slate-400 rounded-full mt-1.5 shrink-0"></div>
+                <div>
+                  <p className="text-slate-900 font-bold uppercase text-[10px] mb-0.5 tracking-tight">Sistem Siaga</p>
+                  <p className="text-slate-800 opacity-80">Absen Shift {currentShift?.name} belum dibuka. Silakan kembali pada pukul {currentShift?.startTime} WIB.</p>
                 </div>
-              )}
-               {isOffDay && (
-                 <div className="flex items-start gap-4 p-3 bg-amber-50 border-l-4 border-amber-500 rounded-lg text-xs leading-relaxed">
-                   <div className="w-2 h-2 bg-amber-500 rounded-full mt-1.5 shrink-0"></div>
-                   <div>
-                      <p className="text-amber-900 font-bold uppercase text-[10px] mb-0.5 tracking-tight">Status Libur</p>
-                      <p className="text-amber-800 opacity-80">Berdasarkan jadwal piket, hari ini Anda dijadwalkan **LIBUR (OFF)**. Nikmati waktu istirahat Anda!</p>
-                   </div>
-                 </div>
-               )}
-               {!currentShift && !isOffDay && (
+              </div>
+            )}
+            {currentShift && getShiftStatus(now, currentShift).isLate && !hasAttendedToday && (
+              <div className="flex items-start gap-4 p-3 bg-rose-50 border-l-4 border-rose-500 rounded-lg text-xs leading-relaxed">
+                <div className="w-2 h-2 bg-rose-500 rounded-full mt-1.5 animate-bounce shrink-0"></div>
+                <div>
+                  <p className="text-rose-900 font-bold uppercase text-[10px] mb-0.5 tracking-tight">Peringatan Terlambat</p>
+                  <p className="text-rose-800 opacity-80">Waktu masuk Shift {currentShift.name} telah lewat batas toleransi ({getShiftStatus(now, currentShift).graceThreshold}). Status kehadiran akan ditandai terlambat.</p>
+                </div>
+              </div>
+            )}
+            {hasAttendedToday && !hasCheckedOutToday && checkOutInfo?.isCheckOutWindow && (
+              checkOutInfo.isLateCheckOut ? (
                 <div className="flex items-start gap-4 p-3 bg-amber-50 border-l-4 border-amber-500 rounded-lg text-xs leading-relaxed">
-                  <div className="w-2 h-2 bg-amber-500 rounded-full mt-1.5 shrink-0"></div>
+                  <div className="w-2 h-2 bg-amber-500 rounded-full mt-1.5 animate-pulse shrink-0"></div>
                   <div>
-                     <p className="text-amber-900 font-bold uppercase text-[10px] mb-0.5 tracking-tight">Di Luar Jam Piket</p>
-                <p className="text-amber-800 opacity-80">Tidak ada jadwal piket yang aktif saat ini. Silakan periksa jadwal piket Anda.</p>
+                    <p className="text-amber-900 font-bold uppercase text-[10px] mb-0.5 tracking-tight">Absen Pulang (Terlambat)</p>
+                    <p className="text-amber-800 opacity-80">Jadwal Shift {effectiveShift?.name} telah berakhir pada pukul {effectiveShift?.endTime} WIB. Anda tetap dapat melakukan absen pulang sekarang.</p>
                   </div>
                 </div>
-              )}
+              ) : (
+                <div className="flex items-start gap-4 p-3 bg-emerald-50 border-l-4 border-emerald-500 rounded-lg text-xs leading-relaxed">
+                  <div className="w-2 h-2 bg-emerald-500 rounded-full mt-1.5 animate-bounce shrink-0"></div>
+                  <div>
+                    <p className="text-emerald-900 font-bold uppercase text-[10px] mb-0.5 tracking-tight">Waktunya Pulang</p>
+                    <p className="text-emerald-800 opacity-80">Jendela waktu absen pulang untuk Shift {effectiveShift?.name} telah terbuka. Silakan lakukan absen pulang.</p>
+                  </div>
+                </div>
+              )
+            )}
+            {/* Notifikasi khusus Jumat rawat jalan */}
+            {fridayEarlyInfo && !hasCheckedOutToday && (
+              <div className="flex items-start gap-4 p-3 bg-amber-50 border-l-4 border-amber-400 rounded-lg text-xs leading-relaxed">
+                <div className="w-2 h-2 bg-amber-400 rounded-full mt-1.5 animate-pulse shrink-0"></div>
+                <div>
+                  <p className="text-amber-900 font-bold uppercase text-[10px] mb-0.5 tracking-tight">⚕️ Jumat — Rawat Jalan</p>
+                  {fridayEarlyInfo.isTooEarly && (
+                    <p className="text-amber-800 opacity-80">
+                      Window absen pulang rawat jalan akan dibuka pukul <strong>{format(fridayEarlyInfo.checkOutWindowStart, 'HH:mm')}</strong> WIB
+                      (s.d. {format(fridayEarlyInfo.checkOutWindowEnd, 'HH:mm')} WIB).
+                    </p>
+                  )}
+                  {fridayEarlyInfo.isCheckOutWindow && hasAttendedToday && (
+                    <p className="text-amber-800 opacity-80">
+                      Window absen pulang rawat jalan <strong>sedang aktif</strong> hingga pukul {format(fridayEarlyInfo.checkOutWindowEnd, 'HH:mm')} WIB. Silakan absen pulang!
+                    </p>
+                  )}
+                  {fridayEarlyInfo.isCheckOutWindow && !hasAttendedToday && (
+                    <p className="text-amber-800 opacity-80">
+                      Absen datang terlebih dahulu, kemudian lakukan absen pulang rawat jalan sebelum pukul {format(fridayEarlyInfo.checkOutWindowEnd, 'HH:mm')} WIB.
+                    </p>
+                  )}
+                  {fridayEarlyInfo.isExpired && (
+                    <p className="text-amber-800 opacity-80">
+                      Window absen pulang rawat jalan telah berakhir (pukul {format(fridayEarlyInfo.checkOutWindowEnd, 'HH:mm')} WIB). Gunakan absen pulang shift normal.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
+            {isOffDay && (
+              <div className="flex items-start gap-4 p-3 bg-amber-50 border-l-4 border-amber-500 rounded-lg text-xs leading-relaxed">
+                <div className="w-2 h-2 bg-amber-500 rounded-full mt-1.5 shrink-0"></div>
+                <div>
+                  <p className="text-amber-900 font-bold uppercase text-[10px] mb-0.5 tracking-tight">Status Libur</p>
+                  <p className="text-amber-800 opacity-80">Berdasarkan jadwal piket, hari ini Anda dijadwalkan **LIBUR / OFF**. Nikmati waktu istirahat Anda!</p>
+                </div>
+              </div>
+            )}
+            {!currentShift && !isOffDay && (
+              <div className="flex items-start gap-4 p-3 bg-amber-50 border-l-4 border-amber-500 rounded-lg text-xs leading-relaxed">
+                <div className="w-2 h-2 bg-amber-500 rounded-full mt-1.5 shrink-0"></div>
+                <div>
+                  <p className="text-amber-900 font-bold uppercase text-[10px] mb-0.5 tracking-tight">Di Luar Jam Piket</p>
+                  <p className="text-amber-800 opacity-80">Tidak ada jadwal piket yang aktif saat ini. Silakan periksa jadwal piket Anda.</p>
+                </div>
+              </div>
+            )}
           </CardContent>
           <CardFooter className="bg-slate-50 border-t p-4 flex flex-col gap-2.5">
-             <Button 
-               onClick={() => {
-                 setDashboardTab('leave');
-                 toast.success('Formulir pengajuan izin dibuka di bagian bawah halaman!');
-                 setTimeout(() => {
-                   const el = document.getElementById('leave-form-card');
-                   if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                 }, 150);
-               }}
-               className="w-full text-[10px] uppercase font-black tracking-widest bg-red-600 hover:bg-red-700 text-white shadow-md shadow-red-100 h-10 transition-all active:scale-95"
-             >
-               <FileText size={14} className="mr-2" />
-               Ajukan Izin Pegawai
-             </Button>
+            <Button
+              onClick={() => {
+                setDashboardTab('leave');
+                toast.success('Formulir pengajuan izin dibuka di bagian bawah halaman!');
+                setTimeout(() => {
+                  const el = document.getElementById('leave-form-card');
+                  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }, 150);
+              }}
+              className="w-full text-[10px] uppercase font-black tracking-widest bg-red-600 hover:bg-red-700 text-white shadow-md shadow-red-100 h-10 transition-all active:scale-95"
+            >
+              <FileText size={14} className="mr-2" />
+              Ajukan Izin Pegawai
+            </Button>
 
-             <Dialog open={showBidangRoster} onOpenChange={setShowBidangRoster}>
-               <DialogTrigger
-                 render={
-                   <Button onClick={fetchBidangRoster} disabled={isFetchingBidang} variant="outline" className="w-full text-[10px] uppercase font-black tracking-widest border-red-200 text-red-600 hover:bg-red-50 h-10">
-                     <Users size={14} className="mr-2" />
-                     {isFetchingBidang ? 'Memuat Jadwal...' : 'Lihat Jadwal Piket'}
-                   </Button>
-                 }
-               />
-               <DialogContent className="max-w-4xl max-h-[80vh] overflow-hidden flex flex-col p-0">
-                 <DialogHeader className="p-4 border-b bg-slate-50 shrink-0">
-                   <DialogTitle className="text-xs font-black uppercase tracking-widest text-slate-700">Jadwal Piket: {profile?.bidang || ''}</DialogTitle>
-                   <DialogDescription className="text-[10px] uppercase tracking-wider font-bold text-slate-400">
-                     Bulan {format(now, 'MMMM yyyy', { locale: id })}
-                   </DialogDescription>
-                 </DialogHeader>
-                 <div className="overflow-auto flex-1 p-4">
-                   <Table>
-                     <TableHeader className="bg-slate-50/80">
-                       <TableRow>
-                         <TableHead className="sticky top-0 left-0 bg-slate-50 z-30 text-[9px] uppercase font-black shadow-[2px_0_5px_rgba(0,0,0,0.05)] py-2 border-b">Pegawai</TableHead>
-                         {eachDayOfInterval({ start: startOfMonth(now), end: endOfMonth(now) }).map(date => (
-                           <TableHead key={date.toISOString()} className="sticky top-0 bg-slate-50 z-20 text-center min-w-[40px] px-1 py-2 text-[9px] font-black uppercase border-b">
-                             <span className="opacity-50">{format(date, 'EEE', { locale: id })}</span><br/>
-                             <span className="text-slate-800">{format(date, 'dd')}</span>
-                           </TableHead>
-                         ))}
-                       </TableRow>
-                     </TableHeader>
-                     <TableBody>
-                       {bidangUsers.map(emp => (
-                         <TableRow key={emp.uid} className="hover:bg-slate-50 transition-colors">
-                           <TableCell className="sticky left-0 bg-white z-10 py-2 border-r shadow-[2px_0_5px_rgba(0,0,0,0.02)] min-w-[120px]">
-                             <p className="font-black text-[10px] uppercase text-slate-700 leading-tight">{emp.displayName || emp.name || 'Pegawai'}</p>
-                           </TableCell>
-                           {eachDayOfInterval({ start: startOfMonth(now), end: endOfMonth(now) }).map(date => {
-                             const dateStr = format(date, 'yyyy-MM-dd');
-                             const roster = bidangRosters.find(r => r.userId === emp.uid && r.date === dateStr);
-                             return (
-                               <TableCell key={date.toISOString()} className="text-center p-1 border-r border-b last:border-r-0">
-                                 {roster ? (
-                                    <Badge variant="outline" className={cn(
-                                      "text-[8px] font-black uppercase px-1.5 py-0.5 rounded shadow-sm",
-                                      roster.shiftName === 'OFF' ? "bg-slate-100 text-slate-400 border-slate-200" : "bg-red-50 text-red-600 border-red-200"
-                                    )}>
-                                      {roster.shiftName === 'OFF' ? 'L' : roster.shiftName}
-                                    </Badge>
-                                 ) : (
-                                    <span className="text-[8px] text-slate-300">-</span>
-                                 )}
-                               </TableCell>
-                             )
-                           })}
-                         </TableRow>
-                       ))}
-                       {bidangUsers.length === 0 && (
-                          <TableRow>
-                            <TableCell colSpan={32} className="py-8 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">
-                              Belum ada data pegawai di bidang ini.
-                            </TableCell>
-                          </TableRow>
-                       )}
-                     </TableBody>
-                   </Table>
-                 </div>
-               </DialogContent>
-             </Dialog>
+            <Dialog open={showBidangRoster} onOpenChange={setShowBidangRoster}>
+              <DialogTrigger
+                render={
+                  <Button onClick={fetchBidangRoster} disabled={isFetchingBidang} variant="outline" className="w-full text-[10px] uppercase font-black tracking-widest border-red-200 text-red-600 hover:bg-red-50 h-10">
+                    <Users size={14} className="mr-2" />
+                    {isFetchingBidang ? 'Memuat Jadwal...' : 'Lihat Jadwal Piket'}
+                  </Button>
+                }
+              />
+              <DialogContent className="max-w-4xl max-h-[80vh] overflow-hidden flex flex-col p-0">
+                <DialogHeader className="p-4 border-b bg-slate-50 shrink-0">
+                  <DialogTitle className="text-xs font-black uppercase tracking-widest text-slate-700">Jadwal Piket: {profile?.bidang || ''}</DialogTitle>
+                  <DialogDescription className="text-[10px] uppercase tracking-wider font-bold text-slate-400">
+                    Bulan {format(now, 'MMMM yyyy', { locale: id })}
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="overflow-auto flex-1 p-4">
+                  <Table>
+                    <TableHeader className="bg-slate-50/80">
+                      <TableRow>
+                        <TableHead className="sticky top-0 left-0 bg-slate-50 z-30 text-[9px] uppercase font-black shadow-[2px_0_5px_rgba(0,0,0,0.05)] py-2 border-b">Pegawai</TableHead>
+                        {eachDayOfInterval({ start: startOfMonth(now), end: endOfMonth(now) }).map(date => (
+                          <TableHead key={date.toISOString()} className="sticky top-0 bg-slate-50 z-20 text-center min-w-[40px] px-1 py-2 text-[9px] font-black uppercase border-b">
+                            <span className="opacity-50">{format(date, 'EEE', { locale: id })}</span><br />
+                            <span className="text-slate-800">{format(date, 'dd')}</span>
+                          </TableHead>
+                        ))}
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {bidangUsers.map(emp => (
+                        <TableRow key={emp.uid} className="hover:bg-slate-50 transition-colors">
+                          <TableCell className="sticky left-0 bg-white z-10 py-2 border-r shadow-[2px_0_5px_rgba(0,0,0,0.02)] min-w-[120px]">
+                            <p className="font-black text-[10px] uppercase text-slate-700 leading-tight">{emp.displayName || emp.name || 'Pegawai'}</p>
+                          </TableCell>
+                          {eachDayOfInterval({ start: startOfMonth(now), end: endOfMonth(now) }).map(date => {
+                            const dateStr = format(date, 'yyyy-MM-dd');
+                            const roster = bidangRosters.find(r => r.userId === emp.uid && r.date === dateStr);
+                            return (
+                              <TableCell key={date.toISOString()} className="text-center p-1 border-r border-b last:border-r-0">
+                                {roster ? (
+                                  <Badge variant="outline" className={cn(
+                                    "text-[8px] font-black uppercase px-1.5 py-0.5 rounded shadow-sm",
+                                    roster.shiftName === 'Libur' ? "bg-rose-50 text-rose-600 border-rose-200" :
+                                      roster.shiftName === 'Malam' ? "bg-orange-50 text-orange-600 border-orange-200" :
+                                        roster.shiftName === 'OFF' ? "bg-slate-100 text-slate-400 border-slate-200" : "bg-red-50 text-red-600 border-red-200"
+                                  )}>
+                                    {roster.shiftName === 'Libur' ? 'L' : roster.shiftName}
+                                  </Badge>
+                                ) : (
+                                  <span className="text-[8px] text-slate-300">-</span>
+                                )}
+                              </TableCell>
+                            )
+                          })}
+                        </TableRow>
+                      ))}
+                      {bidangUsers.length === 0 && (
+                        <TableRow>
+                          <TableCell colSpan={32} className="py-8 text-center text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                            Belum ada data pegawai di bidang ini.
+                          </TableCell>
+                        </TableRow>
+                      )}
+                    </TableBody>
+                  </Table>
+                </div>
+              </DialogContent>
+            </Dialog>
           </CardFooter>
         </Card>
       </section>
@@ -1568,7 +1600,7 @@ export default function Dashboard() {
                 <CalendarIcon size={100} />
               </div>
             </Card>
-            
+
             <Card className="bg-white border border-slate-200 shadow-sm p-5 flex flex-col justify-center relative overflow-hidden group hover:ring-2 ring-emerald-100 transition-all">
               <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1 relative z-10">Akurasi Lokasi</span>
               <div className="flex items-baseline gap-1 relative z-10">

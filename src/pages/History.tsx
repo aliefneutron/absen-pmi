@@ -12,7 +12,8 @@ import { Calendar as CalendarIcon, Clock, MapPin, Camera, AlertTriangle } from '
 export default function History({ standalone = true }: { standalone?: boolean }) {
   const { user } = useAuth();
   const [logs, setLogs] = useState<any[]>([]);
-  const [settings, setSettings] = useState<any>({ 
+  const [rosters, setRosters] = useState<any[]>([]);
+  const [settings, setSettings] = useState<any>({
     enabledDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'],
     shifts: [
       { name: 'Pagi', startTime: '07:30', endTime: '13:30' },
@@ -26,7 +27,7 @@ export default function History({ standalone = true }: { standalone?: boolean })
   useEffect(() => {
     if (user) {
       setLoading(true);
-      Promise.all([fetchLogs(selectedMonth), fetchSettings()]).finally(() => setLoading(false));
+      Promise.all([fetchLogs(selectedMonth), fetchSettings(), fetchRosters(selectedMonth)]).finally(() => setLoading(false));
     }
   }, [user, selectedMonth]);
 
@@ -40,20 +41,20 @@ export default function History({ standalone = true }: { standalone?: boolean })
       );
 
       // Gunakan timeout 5 detik agar tidak loading terus jika koneksi lambat/macet
-      const timeoutPromise = new Promise((_, reject) => 
+      const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Timeout koneksi database')), 5000)
       );
 
       const snap = await Promise.race([getDocs(q), timeoutPromise]) as any;
       const fetched = snap.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
-      
+
       // Sort manually to avoid index requirement
       fetched.sort((a: any, b: any) => {
         const timeA = a.timestamp?.toDate ? a.timestamp.toDate().getTime() : new Date(a.timestamp || 0).getTime();
         const timeB = b.timestamp?.toDate ? b.timestamp.toDate().getTime() : new Date(b.timestamp || 0).getTime();
         return timeB - timeA;
       });
-      
+
       setLogs(fetched);
     } catch (err) {
       console.error('Fetch Logs Error:', err);
@@ -64,18 +65,18 @@ export default function History({ standalone = true }: { standalone?: boolean })
           where('userId', '==', user?.uid),
           limit(50)
         );
-        const fallbackTimeout = new Promise((_, reject) => 
+        const fallbackTimeout = new Promise((_, reject) =>
           setTimeout(() => reject(new Error('Timeout fallback koneksi database')), 5000)
         );
         const snap = await Promise.race([getDocs(fallbackQ), fallbackTimeout]) as any;
         const fetched = snap.docs.map((doc: any) => ({ id: doc.id, ...doc.data() }));
-        
+
         fetched.sort((a: any, b: any) => {
           const timeA = a.timestamp?.toDate ? a.timestamp.toDate().getTime() : new Date(a.timestamp || 0).getTime();
           const timeB = b.timestamp?.toDate ? b.timestamp.toDate().getTime() : new Date(b.timestamp || 0).getTime();
           return timeB - timeA;
         });
-        
+
         setLogs(fetched);
       } catch (fallbackErr) {
         console.error('Fallback Fetch Logs Error:', fallbackErr);
@@ -85,7 +86,7 @@ export default function History({ standalone = true }: { standalone?: boolean })
 
   const fetchSettings = async () => {
     try {
-      const timeoutPromise = new Promise((_, reject) => 
+      const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Timeout settings')), 5000)
       );
       const docSnap = await Promise.race([getDoc(doc(db, 'settings', 'global')), timeoutPromise]) as any;
@@ -97,9 +98,27 @@ export default function History({ standalone = true }: { standalone?: boolean })
     }
   };
 
+  const fetchRosters = async (monthStr: string) => {
+    try {
+      const q = query(
+        collection(db, 'rosters'),
+        where('userId', '==', user?.uid),
+        where('date', '>=', `${monthStr}-01`),
+        where('date', '<=', `${monthStr}-31`)
+      );
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Timeout rosters')), 5000)
+      );
+      const snap = await Promise.race([getDocs(q), timeoutPromise]) as any;
+      setRosters(snap.docs.map((doc: any) => ({ id: doc.id, ...doc.data() })));
+    } catch (err) {
+      console.error('Fetch Rosters Error:', err);
+    }
+  };
+
   const generateHistoryData = () => {
     if (!settings) return [];
-    
+
     let start, end;
     const today = new Date();
 
@@ -107,12 +126,12 @@ export default function History({ standalone = true }: { standalone?: boolean })
       const [yearStr, monthStr] = selectedMonth.split('-');
       const year = parseInt(yearStr);
       const month = parseInt(monthStr) - 1;
-      
+
       start = new Date(year, month, 1);
       const endOfSelectedMonth = new Date(year, month + 1, 0);
-      
-      end = (start.getMonth() === today.getMonth() && start.getFullYear() === today.getFullYear()) 
-        ? today 
+
+      end = (start.getMonth() === today.getMonth() && start.getFullYear() === today.getFullYear())
+        ? today
         : endOfSelectedMonth;
 
       if (start > today) return [];
@@ -121,22 +140,24 @@ export default function History({ standalone = true }: { standalone?: boolean })
       start.setDate(today.getDate() - 7);
       end = today;
     }
-    
+
     const days = eachDayOfInterval({ start, end });
     days.reverse();
-    
+
     return days.map(d => {
       const dateStr = format(d, 'yyyy-MM-dd');
       const log = logs.find(l => l.date === dateStr);
+      const roster = rosters.find(r => r.date === dateStr);
       const dayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][d.getDay()];
       const isEnabledDay = (settings?.enabledDays || ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']).includes(dayName);
       const isWorkingDay = isEnabledDay;
-      
+
       return {
         id: dateStr,
         date: d,
         dateStr,
         log,
+        roster,
         isWorkingDay
       };
     });
@@ -160,11 +181,11 @@ export default function History({ standalone = true }: { standalone?: boolean })
             <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Data verifikasi dan rekam jejak kehadiran</p>
           </div>
           <div className="flex items-center gap-2">
-            <Input 
-              type="month" 
-              value={selectedMonth} 
-              onChange={(e) => setSelectedMonth(e.target.value)} 
-              className="h-9 font-mono text-xs w-40 bg-white" 
+            <Input
+              type="month"
+              value={selectedMonth}
+              onChange={(e) => setSelectedMonth(e.target.value)}
+              className="h-9 font-mono text-xs w-40 bg-white"
             />
             <Badge variant="outline" className="h-fit py-1 px-3 border-slate-200 text-xs font-bold text-slate-500">
               {logs.length} CATATAN
@@ -180,7 +201,7 @@ export default function History({ standalone = true }: { standalone?: boolean })
             <Badge variant="outline" className="text-[9px] border-slate-200 font-black">{historyData.filter(d => d.log).length} CATATAN</Badge>
           </div>
         )}
-        
+
         <div className="flex-1 overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-black uppercase">
@@ -235,7 +256,7 @@ export default function History({ standalone = true }: { standalone?: boolean })
                       )}
                       {!item.log && (
                         <div className="flex items-center gap-1 mt-1.5 ml-5 text-slate-400 font-bold">
-                           <span>-</span>
+                          <span className="text-[10px] font-mono">{item.roster ? (item.roster.shiftName === 'Libur' ? 'Shift L' : item.roster.shiftName === 'OFF' ? 'Shift OFF' : `Shift ${item.roster.shiftName}`) : '-'}</span>
                         </div>
                       )}
                     </td>
@@ -244,7 +265,7 @@ export default function History({ standalone = true }: { standalone?: boolean })
                         item.log.isLeave ? (
                           <div className="flex flex-col gap-1">
                             <span className="w-fit px-3 py-1 bg-red-100 text-red-700 rounded-lg text-[9px] font-black uppercase tracking-widest border border-red-200">
-                               {item.log.leaveType === 'I' ? 'IZIN' : item.log.leaveType === 'S' ? 'SAKIT' : item.log.leaveType === 'C' ? 'CUTI' : 'TUGAS LUAR'}
+                              {item.log.leaveType === 'I' ? 'IZIN' : item.log.leaveType === 'S' ? 'SAKIT' : item.log.leaveType === 'C' ? 'CUTI' : 'TUGAS LUAR'}
                             </span>
                             <span className="text-[8px] text-red-400 font-bold uppercase ml-1">Admin Bypass</span>
                           </div>
@@ -261,16 +282,22 @@ export default function History({ standalone = true }: { standalone?: boolean })
                         )
                       ) : !item.isWorkingDay ? (
                         <div className="flex flex-col gap-1">
-                           <span className="w-fit px-3 py-1 bg-slate-100 text-slate-500 rounded-lg text-[9px] font-black uppercase tracking-widest border border-slate-200">
-                             TIDAK ADA ABSEN
-                           </span>
+                          <span className="w-fit px-3 py-1 bg-slate-100 text-slate-500 rounded-lg text-[9px] font-black uppercase tracking-widest border border-slate-200">
+                            TIDAK ADA ABSEN
+                          </span>
+                        </div>
+                      ) : (!item.roster || item.roster.shiftName === 'OFF' || item.roster.shiftName === 'Libur') ? (
+                        <div className="flex flex-col gap-1">
+                          <span className="w-fit px-3 py-1 bg-slate-100 text-slate-500 rounded-lg text-[9px] font-black uppercase tracking-widest border border-slate-200">
+                            LIBUR/OFF
+                          </span>
                         </div>
                       ) : (
                         <div className="flex flex-col gap-1">
-                           <span className="w-fit px-3 py-1 bg-rose-50 text-rose-500 rounded-lg text-[9px] font-black uppercase tracking-widest border border-rose-200">
-                             <AlertTriangle size={10} className="inline mr-1 mb-0.5" />ALFA / TIDAK ABSEN
-                           </span>
-                           <span className="text-[8px] text-rose-400 font-bold uppercase ml-1">Data Tidak Ditemukan</span>
+                          <span className="w-fit px-3 py-1 bg-rose-50 text-rose-500 rounded-lg text-[9px] font-black uppercase tracking-widest border border-rose-200">
+                            <AlertTriangle size={10} className="inline mr-1 mb-0.5" />ALFA / TIDAK ABSEN
+                          </span>
+                          <span className="text-[8px] text-rose-400 font-bold uppercase ml-1">Data Tidak Ditemukan</span>
                         </div>
                       )}
                     </td>
