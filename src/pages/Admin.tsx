@@ -82,6 +82,8 @@ export default function Admin() {
   const [newEmployee, setNewEmployee] = useState({ name: '', email: '', role: 'staff', nip: '', bidang: 'RAWAT INAP' });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isImporting, setIsImporting] = useState(false);
+  const [employeeImportProgress, setEmployeeImportProgress] = useState(0);
+  const [employeeImportTotal, setEmployeeImportTotal] = useState(0);
 
   // Edit employee state
   const [editingEmployee, setEditingEmployee] = useState<any | null>(null);
@@ -110,7 +112,27 @@ export default function Admin() {
   const [rosters, setRosters] = useState<any[]>([]);
   const [rosterMonth, setRosterMonth] = useState(format(new Date(), 'yyyy-MM'));
   const [isImportingRoster, setIsImportingRoster] = useState(false);
+  const [rosterImportProgress, setRosterImportProgress] = useState(0);
+  const [rosterImportTotal, setRosterImportTotal] = useState(0);
+  const [isImportingHistory, setIsImportingHistory] = useState(false);
+  const [historyImportProgress, setHistoryImportProgress] = useState(0);
+  const [historyImportTotal, setHistoryImportTotal] = useState(0);
+  const [historyImportMonth, setHistoryImportMonth] = useState(format(new Date(), 'yyyy-MM'));
+  const historyFileRef = useRef<HTMLInputElement>(null);
   const rosterFileRef = useRef<HTMLInputElement>(null);
+
+  // Helper function for downloading Excel files with correct filename
+  const downloadExcelFile = (wb: XLSX.WorkBook, filename: string) => {
+    // Gunakan Data URI secara langsung untuk kompatibilitas maksimal dengan WebView (misal: Kodular)
+    const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'base64' });
+    const url = 'data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,' + wbout;
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
 
   // Pending and historic leaves state
   const [leaves, setLeaves] = useState<any[]>([]);
@@ -226,6 +248,8 @@ export default function Admin() {
     if (!file) return;
 
     setIsImportingRoster(true);
+    setRosterImportProgress(0);
+    setRosterImportTotal(0);
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
@@ -256,8 +280,15 @@ export default function Admin() {
 
           // Determine data column offset: nama format has bidang in col1, data starts col2
           const dataOffset = isNameFormat ? 2 : 1;
+          const totalRowsToProcess = rows.length - 2;
+          setRosterImportTotal(totalRowsToProcess);
 
           for (let i = 2; i < rows.length; i++) {
+            if (i % 5 === 0) {
+              setRosterImportProgress(i - 2);
+              await new Promise(resolve => setTimeout(resolve, 0));
+            }
+
             const row = rows[i];
             const identifier = row[0]?.toString().trim();
             if (!identifier) continue;
@@ -311,10 +342,17 @@ export default function Admin() {
               }
             }
           }
+          setRosterImportProgress(totalRowsToProcess);
         } else {
           // Fallback to Vertical Format
           const data = XLSX.utils.sheet_to_json(ws) as any[];
-          for (const item of data) {
+          setRosterImportTotal(data.length);
+          for (let i = 0; i < data.length; i++) {
+            if (i % 10 === 0) {
+              setRosterImportProgress(i);
+              await new Promise(resolve => setTimeout(resolve, 0));
+            }
+            const item = data[i];
             const email = (item.email || item.Email || '').toLowerCase().trim();
             let rawDate = item.tanggal || item.Tanggal || item.date || item.Date;
             const shift = item.shift || item.Shift || 'OFF';
@@ -354,6 +392,7 @@ export default function Admin() {
               }
             }
           }
+          setRosterImportProgress(data.length);
         }
 
         toast.success(`${count} jadwal berhasil diimpor`);
@@ -363,6 +402,8 @@ export default function Admin() {
         toast.error('Gagal impor jadwal. Pastikan format sesuai.');
       } finally {
         setIsImportingRoster(false);
+        setRosterImportProgress(0);
+        setRosterImportTotal(0);
         if (rosterFileRef.current) rosterFileRef.current.value = '';
       }
     };
@@ -426,7 +467,7 @@ export default function Admin() {
 
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, 'Jadwal');
-      XLSX.writeFile(wb, `Template_Jadwal_${rosterMonth || format(new Date(), 'yyyy-MM')}.xlsx`);
+      downloadExcelFile(wb, `Template_Jadwal_${rosterMonth || format(new Date(), 'yyyy-MM')}.xlsx`);
     } catch (err) {
       console.error("Template Error:", err);
       toast.error("Gagal mengunduh template. Pastikan bulan sudah dipilih.");
@@ -908,6 +949,8 @@ export default function Admin() {
     if (!file) return;
 
     setIsImporting(true);
+    setEmployeeImportProgress(0);
+    setEmployeeImportTotal(0);
     const reader = new FileReader();
     reader.onload = async (evt) => {
       try {
@@ -918,7 +961,13 @@ export default function Admin() {
         const data = XLSX.utils.sheet_to_json(ws) as any[];
 
         let count = 0;
-        for (const item of data) {
+        setEmployeeImportTotal(data.length);
+        for (let i = 0; i < data.length; i++) {
+          if (i % 5 === 0) {
+            setEmployeeImportProgress(i);
+            await new Promise(resolve => setTimeout(resolve, 0));
+          }
+          const item = data[i];
           const email = item.email || item.Email || item.EMAIL || item['Email'] || item['email'] || '';
           const name = item['nama lengkap'] || item['Nama Lengkap'] || item['NAMA LENGKAP'] || item.nama || item.Nama || item.NAMA || item.name || item.Name || item.NAME || '';
           const nip = item['ID Pegawai'] || item['id pegawai'] || item['ID PEGAWAI'] || item['Id Pegawai'] || item['id_pegawai'] || item.nip || item.Nip || item.NIP || '';
@@ -964,6 +1013,7 @@ export default function Admin() {
           }
         }
 
+        setEmployeeImportProgress(data.length);
         toast.success(`${count} pegawai berhasil diproses (tambah/update)`);
         fetchEmployees();
       } catch (err) {
@@ -971,7 +1021,217 @@ export default function Admin() {
         console.error(err);
       } finally {
         setIsImporting(false);
+        setEmployeeImportProgress(0);
+        setEmployeeImportTotal(0);
         if (fileInputRef.current) fileInputRef.current.value = '';
+      }
+    };
+    reader.readAsBinaryString(file);
+  };
+
+  const downloadHistoryTemplate = () => {
+    try {
+      if (!historyImportMonth) {
+        toast.error("Pilih bulan terlebih dahulu");
+        return;
+      }
+      const dateObj = parse(historyImportMonth, 'yyyy-MM', new Date());
+      const monthName = format(dateObj, 'MMMM yyyy', { locale: id }).toUpperCase();
+
+      const headers = ['NAMA', 'BIDANG'];
+      for (let i = 1; i <= 31; i++) headers.push(i.toString());
+
+      // Group employees by bidang
+      const bidangMap = new Map<string, any[]>();
+      employees.forEach(emp => {
+        const bidang = (emp.bidang || 'LAINNYA').toUpperCase();
+        if (!bidangMap.has(bidang)) bidangMap.set(bidang, []);
+        bidangMap.get(bidang)!.push(emp);
+      });
+
+      const rows: any[][] = [];
+
+      if (bidangMap.size === 0) {
+        const placeholder = ['Contoh Nama', 'BIDANG'];
+        for (let i = 1; i <= 31; i++) placeholder.push('');
+        rows.push(placeholder);
+      } else {
+        for (const [bidang, emps] of bidangMap.entries()) {
+          const bidangHeader = [`--- ${bidang} ---`, ''];
+          for (let i = 1; i <= 31; i++) bidangHeader.push('');
+          rows.push(bidangHeader);
+
+          emps.forEach(emp => {
+            const row = [emp.displayName || emp.name || '', bidang];
+            for (let i = 1; i <= 31; i++) row.push('');
+            rows.push(row);
+          });
+        }
+      }
+
+      const data = [
+        [monthName], // Row 1: nama bulan
+        headers,      // Row 2: header kolom
+        ...rows
+      ];
+
+      const ws = XLSX.utils.aoa_to_sheet(data);
+      ws['!cols'] = [
+        { wch: 28 }, // nama
+        { wch: 16 }, // bidang
+        ...Array(31).fill({ wch: 5 }), // hari 1-31
+      ];
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Template_Riwayat_Absen');
+      downloadExcelFile(wb, `Template_Impor_Riwayat_Absen_${historyImportMonth}.xlsx`);
+    } catch (err) {
+      console.error("Template Error:", err);
+      toast.error("Gagal mengunduh template.");
+    }
+  };
+
+  const importHistoryExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsImportingHistory(true);
+    setHistoryImportProgress(0);
+    setHistoryImportTotal(0);
+    const reader = new FileReader();
+    reader.onload = async (evt) => {
+      try {
+        const bstr = evt.target?.result;
+        const wb = XLSX.read(bstr, { type: 'binary', cellDates: true });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1 }) as any[][];
+        if (rows.length < 2) throw new Error("File kosong");
+
+        let successCount = 0;
+        let errorCount = 0;
+
+        const row2 = rows[1] || [];
+        const col0 = row2[0]?.toString().toLowerCase().trim();
+        const isNameFormat = col0 === 'nama';
+        const isEmailFormat = col0 === 'email';
+        const isGridFormat = (isNameFormat || isEmailFormat) && (row2[1]?.toString() === '1' || row2[2]?.toString() === '1');
+
+        if (!isGridFormat) {
+          throw new Error("Format file tidak dikenali. Pastikan menggunakan template grid yang diunduh.");
+        }
+
+        const monthStr = historyImportMonth;
+        if (!monthStr) {
+          throw new Error("Pilih bulan di aplikasi terlebih dahulu.");
+        }
+
+        const dataOffset = isNameFormat ? 2 : 1;
+        const totalRowsToProcess = rows.length - 2;
+        setHistoryImportTotal(totalRowsToProcess);
+
+        for (let i = 2; i < rows.length; i++) {
+          // Update progress and yield to event loop every 5 rows to keep UI responsive
+          if (i % 5 === 0) {
+            setHistoryImportProgress(i - 2);
+            await new Promise(resolve => setTimeout(resolve, 0));
+          }
+
+          const row = rows[i];
+          const identifier = row[0]?.toString().trim();
+          if (!identifier || identifier.startsWith('---')) continue;
+
+          const identifierLower = identifier.toLowerCase();
+          const emp = employees.find(e => {
+            if (isEmailFormat) {
+              return e.email?.toLowerCase() === identifierLower;
+            } else {
+              const empName = (e.displayName || e.name || '').toLowerCase().trim();
+              return empName === identifierLower;
+            }
+          });
+          if (!emp) {
+            errorCount++;
+            continue;
+          }
+
+          for (let day = 1; day <= 31; day++) {
+            const code = row[dataOffset - 1 + day]?.toString().toUpperCase();
+            if (!code) continue;
+
+            let shiftName = '';
+            if (code === 'P') shiftName = 'Pagi';
+            else if (code === 'S') shiftName = 'Sore';
+            else if (code === 'M') shiftName = 'Malam';
+            else if (code === 'L') shiftName = 'Libur';
+            else if (code === 'OFF') shiftName = 'OFF';
+            else continue; // Abaikan kode yang tidak dikenal
+
+            const dateStr = `${monthStr}-${day.toString().padStart(2, '0')}`;
+
+            // 1. Simpan ke koleksi rosters (agar sistem tahu jadwalnya, termasuk L dan OFF)
+            const rosterId = `${emp.uid || emp.id}_${dateStr}`;
+            const rosterRecord = {
+              userId: emp.uid || emp.id,
+              userName: emp.displayName || emp.name || 'Unknown',
+              userEmail: emp.email,
+              date: dateStr,
+              month: monthStr,
+              shiftName: shiftName,
+              updatedAt: serverTimestamp()
+            };
+            await setDoc(doc(db, 'rosters', rosterId), rosterRecord);
+
+            // 2. Buat log absen HANYA untuk P, S, M
+            if (['Pagi', 'Sore', 'Malam'].includes(shiftName)) {
+              const shiftObj = settings?.shifts?.find((s: any) => s.name === shiftName);
+              if (shiftObj) {
+                const recordId = `${emp.uid || emp.id}_${dateStr}_${shiftName}`;
+
+                const timestamp = new Date(`${dateStr}T${shiftObj.startTime}:00`);
+                const checkOutTimestamp = new Date(`${dateStr}T${shiftObj.endTime}:00`);
+                if (shiftObj.startTime > shiftObj.endTime) {
+                  checkOutTimestamp.setDate(checkOutTimestamp.getDate() + 1);
+                }
+
+                const record: any = {
+                  userId: emp.uid || emp.id,
+                  userName: emp.displayName || emp.name || 'Unknown',
+                  userEmail: emp.email,
+                  timestamp: timestamp,
+                  date: dateStr,
+                  month: monthStr,
+                  shiftName: shiftName,
+                  location: { latitude: settings?.officeLat || -6.1751, longitude: settings?.officeLng || 106.8272 },
+                  isWithinRange: true,
+                  isLate: false,
+                  lateDuration: 0,
+                  lateThreshold: '00:00:00',
+                  selfieUrl: null,
+                  isLeave: false,
+                  checkOutTimestamp: checkOutTimestamp,
+                  checkOutLocation: { latitude: settings?.officeLat || -6.1751, longitude: settings?.officeLng || 106.8272 },
+                  isLateCheckOut: false
+                };
+
+                await setDoc(doc(db, 'attendance', recordId), record);
+                successCount++;
+              }
+            }
+          }
+        }
+
+        setHistoryImportProgress(totalRowsToProcess);
+        toast.success(`Impor selesai: ${successCount} data absen berhasil dibuat, ${errorCount} baris gagal/dilewati.`);
+        fetchLogs(reportMonth);
+      } catch (err: any) {
+        console.error("Import History Error:", err);
+        toast.error(`Gagal mengimpor: ${err.message}`);
+      } finally {
+        setIsImportingHistory(false);
+        setHistoryImportProgress(0);
+        setHistoryImportTotal(0);
+        if (historyFileRef.current) historyFileRef.current.value = '';
       }
     };
     reader.readAsBinaryString(file);
@@ -1053,7 +1313,7 @@ export default function Admin() {
       }
 
       const fileName = `PMI_System_Arch_${format(new Date(), 'yyyy-MM-dd_HHmm')}.xlsx`;
-      XLSX.writeFile(wb, fileName);
+      downloadExcelFile(wb, fileName);
       toast.success('Semua data berhasil diekspor!');
     } catch (err) {
       toast.error('Gagal mengekspor data');
@@ -1073,7 +1333,7 @@ export default function Admin() {
       }));
       const ws = XLSX.utils.json_to_sheet(dailyData);
       XLSX.utils.book_append_sheet(wb, ws, `Harian_${reportDate}`);
-      XLSX.writeFile(wb, `Laporan_Harian_${reportDate}.xlsx`);
+      downloadExcelFile(wb, `Laporan_Harian_${reportDate}.xlsx`);
       toast.success('Laporan Harian berhasil diekspor!');
     } catch (err) {
       toast.error('Gagal mengekspor Laporan Harian');
@@ -1100,7 +1360,7 @@ export default function Admin() {
       }));
       const ws = XLSX.utils.json_to_sheet(monthlyData);
       XLSX.utils.book_append_sheet(wb, ws, `Bulanan_${reportMonth}`);
-      XLSX.writeFile(wb, `Laporan_Bulanan_${reportMonth}.xlsx`);
+      downloadExcelFile(wb, `Laporan_Bulanan_${reportMonth}.xlsx`);
       toast.success('Laporan Bulanan berhasil diekspor!');
     } catch (err) {
       toast.error('Gagal mengekspor Laporan Bulanan');
@@ -1127,7 +1387,7 @@ export default function Admin() {
       }));
       const ws = XLSX.utils.json_to_sheet(eventData);
       XLSX.utils.book_append_sheet(wb, ws, 'Absen_Acara');
-      XLSX.writeFile(wb, `Laporan_Absen_Acara_${reportMonth}.xlsx`);
+      downloadExcelFile(wb, `Laporan_Absen_Acara_${reportMonth}.xlsx`);
       toast.success('Laporan Absen Acara berhasil diekspor!');
     } catch (err) {
       toast.error('Gagal mengekspor Laporan Absen Acara');
@@ -2478,6 +2738,49 @@ export default function Admin() {
             </div>
           </div>
 
+          <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between p-4 bg-slate-50 rounded-lg border border-slate-200">
+            <div className="flex-1 w-full">
+              <h4 className="text-xs font-black text-slate-700 uppercase tracking-widest">Impor Riwayat Absen</h4>
+              <p className="text-[10px] text-slate-500 font-bold">Masukkan data absensi historis via Excel (format grid/jadwal).</p>
+              {isImportingHistory && historyImportTotal > 0 && (
+                <div className="mt-3 w-full max-w-md">
+                  <div className="flex justify-between text-[9px] font-bold text-slate-500 mb-1 uppercase">
+                    <span>Proses Impor...</span>
+                    <span>{Math.round((historyImportProgress / historyImportTotal) * 100)}% ({historyImportProgress}/{historyImportTotal})</span>
+                  </div>
+                  <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                    <div
+                      className="bg-blue-600 h-2 rounded-full transition-all duration-300 ease-out"
+                      style={{ width: `${Math.round((historyImportProgress / historyImportTotal) * 100)}%` }}
+                    ></div>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="flex gap-2 items-center">
+              <Input
+                type="month"
+                value={historyImportMonth}
+                onChange={(e) => setHistoryImportMonth(e.target.value)}
+                className="h-9 font-mono text-xs w-40 bg-white"
+                disabled={isImportingHistory}
+              />
+              <Button onClick={downloadHistoryTemplate} disabled={isImportingHistory} size="sm" variant="outline" className="h-9 border-slate-200 shadow-sm text-[10px] font-black uppercase text-slate-600">
+                Unduh Template
+              </Button>
+              <Button
+                onClick={() => historyFileRef.current?.click()}
+                disabled={isImportingHistory}
+                size="sm"
+                variant="outline"
+                className="h-9 border-slate-200 shadow-sm text-[10px] font-black uppercase text-blue-600 hover:text-white hover:bg-blue-600"
+              >
+                <Upload size={14} className="mr-1" /> {isImportingHistory ? 'Mengimpor...' : 'Impor Data'}
+              </Button>
+              <input type="file" ref={historyFileRef} className="hidden" accept=".xlsx, .xls" onChange={importHistoryExcel} />
+            </div>
+          </div>
+
           <Card className="border border-slate-200 shadow-sm overflow-hidden bg-white">
             {reportType === 'harian' ? (
               <>
@@ -2836,9 +3139,23 @@ export default function Admin() {
 
           <Card className="border border-slate-200 shadow-sm overflow-hidden bg-white">
             <CardHeader className="p-4 border-b bg-slate-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              <div>
+              <div className="flex-1 w-full">
                 <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Manajemen Jadwal Piket</h3>
                 <p className="text-[9px] text-slate-400 font-bold uppercase tracking-tighter">Input jadwal piket harian pegawai</p>
+                {isImportingRoster && rosterImportTotal > 0 && (
+                  <div className="mt-3 w-full max-w-md">
+                    <div className="flex justify-between text-[9px] font-bold text-slate-500 mb-1 uppercase">
+                      <span>Proses Impor...</span>
+                      <span>{Math.round((rosterImportProgress / rosterImportTotal) * 100)}% ({rosterImportProgress}/{rosterImportTotal})</span>
+                    </div>
+                    <div className="w-full bg-slate-200 rounded-full h-2 overflow-hidden">
+                      <div
+                        className="bg-emerald-500 h-2 rounded-full transition-all duration-300 ease-out"
+                        style={{ width: `${Math.round((rosterImportProgress / rosterImportTotal) * 100)}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 <Input
@@ -2849,6 +3166,7 @@ export default function Admin() {
                     fetchRosters(e.target.value);
                   }}
                   className="h-8 text-[10px] w-40 bg-white"
+                  disabled={isImportingRoster}
                 />
                 <Button
                   size="sm"
@@ -2863,6 +3181,7 @@ export default function Admin() {
                   size="sm"
                   variant="ghost"
                   onClick={downloadJadwalTemplate}
+                  disabled={isImportingRoster}
                   className="h-8 text-[8px] font-bold uppercase tracking-widest text-red-600 hover:text-red-700 hover:bg-red-50"
                 >
                   <Download size={12} className="mr-1.5" /> Template
@@ -3000,6 +3319,20 @@ export default function Admin() {
                 >
                   <Upload size={14} className="mr-1.5" /> {isImporting ? 'Mengimpor...' : 'Impor Excel'}
                 </Button>
+                {isImporting && employeeImportTotal > 0 && (
+                  <div className="w-32 ml-2">
+                    <div className="flex justify-between text-[8px] font-bold text-slate-500 mb-0.5 uppercase">
+                      <span>Proses...</span>
+                      <span>{Math.round((employeeImportProgress / employeeImportTotal) * 100)}%</span>
+                    </div>
+                    <div className="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+                      <div
+                        className="bg-red-500 h-1.5 rounded-full transition-all duration-300 ease-out"
+                        style={{ width: `${Math.round((employeeImportProgress / employeeImportTotal) * 100)}%` }}
+                      ></div>
+                    </div>
+                  </div>
+                )}
                 <Button
                   size="sm"
                   variant="outline"

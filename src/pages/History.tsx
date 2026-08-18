@@ -286,10 +286,16 @@ export default function History({ standalone = true }: { standalone?: boolean })
                             TIDAK ADA ABSEN
                           </span>
                         </div>
-                      ) : (!item.roster || item.roster.shiftName === 'OFF' || item.roster.shiftName === 'Libur') ? (
+                      ) : (!item.roster || item.roster.shiftName === 'Libur') ? (
                         <div className="flex flex-col gap-1">
                           <span className="w-fit px-3 py-1 bg-slate-100 text-slate-500 rounded-lg text-[9px] font-black uppercase tracking-widest border border-slate-200">
-                            LIBUR/OFF
+                            LIBUR
+                          </span>
+                        </div>
+                      ) : (item.roster.shiftName === 'OFF') ? (
+                        <div className="flex flex-col gap-1">
+                          <span className="w-fit px-3 py-1 bg-slate-100 text-slate-500 rounded-lg text-[9px] font-black uppercase tracking-widest border border-slate-200">
+                            TIDAK TERJADWAL
                           </span>
                         </div>
                       ) : (
