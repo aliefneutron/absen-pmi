@@ -1345,6 +1345,7 @@ export default function Admin() {
 
       toast.success(`Berhasil menghapus ${attSnap.size} absen dan ${rosterSnap.size} jadwal.`, { id: toastId });
       fetchLogs(reportMonth);
+      fetchRosters(rosterMonth);
     } catch (err) {
       console.error(err);
       toast.error("Gagal menghapus data", { id: toastId });
