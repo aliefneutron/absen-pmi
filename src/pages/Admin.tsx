@@ -316,7 +316,7 @@ export default function Admin() {
 
             // Iterate days 1-31
             for (let day = 1; day <= 31; day++) {
-              const code = row[dataOffset - 1 + day]?.toString().toUpperCase();
+              const code = row[dataOffset - 1 + day]?.toString().trim().toUpperCase();
               if (!code) continue;
 
               let shiftName = '';
@@ -1186,7 +1186,7 @@ export default function Admin() {
           let alfaCount = 0;
 
           for (let day = 1; day <= 31; day++) {
-            const code = row[dataOffset - 1 + day]?.toString().toUpperCase();
+            const code = row[dataOffset - 1 + day]?.toString().trim().toUpperCase();
             if (!code) continue;
 
             let shiftName = '';
