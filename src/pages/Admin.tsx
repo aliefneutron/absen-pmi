@@ -3678,18 +3678,14 @@ export default function Admin() {
                                 <Trash2 size={12} />
                               </Button>
                               <div className="w-px h-7 bg-slate-100 mx-1" />
-                              {emp.deviceId ? (
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => confirmResetDevice(emp)}
-                                  className="h-7 text-[8px] font-black uppercase tracking-widest border-rose-200 text-rose-600 hover:bg-rose-50 px-2"
-                                >
-                                  <RefreshCw size={10} className="mr-1" /> Reset Perangkat
-                                </Button>
-                              ) : (
-                                <span className="text-[8px] font-black text-slate-300 uppercase tracking-widest italic pr-2 self-center">Tidak Ada Perangkat</span>
-                              )}
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => confirmResetDevice(emp)}
+                                className={`h-7 text-[8px] font-black uppercase tracking-widest px-2 ${emp.deviceId ? 'border-rose-200 text-rose-600 hover:bg-rose-50' : 'border-slate-200 text-slate-400 hover:bg-slate-50'}`}
+                              >
+                                <RefreshCw size={10} className="mr-1" /> Reset Perangkat
+                              </Button>
                             </>
                           )}
                         </div>
